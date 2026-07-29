@@ -75,27 +75,26 @@ spec 和 plan 的生成采用双角色协作模式：
 
 ## 目录结构
 
-### Skill 源文件
+### Skill 仓库（本仓库）
+
+仓库根目录即为 skill 根，遵循标准 Codex skill 仓库格式：
 
 ```
 ai-coding-workflow/
-├── .agents/
-│   └── skills/
-│       └── ai-coding-workflow/
-│           ├── SKILL.md                 # (必须) Codex skill 入口
-│           ├── agents/
-│           │   └── openai.yaml          # (必须) Codex 接口配置
-│           ├── references/              # (可选) 审查标准参考文档
-│           │   ├── review-spec.md       # Spec 审查 P0/P1/P2 标准
-│           │   ├── review-plan.md       # Plan 审查 P0/P1/P2 标准
-│           │   └── review-exec.md       # 执行/代码审查 P0/P1/P2 标准
-│           ├── scripts/                 # (可选) 辅助脚本
-│           └── assets/                  # (可选) 模板、图片等资源
-├── docs/
-│   ├── PRD.md                           # 产品需求文档
-│   ├── IMPLEMENTATION_PLAN.md           # 开发计划
-│   └── agents.md                        # AI 编码代理指引
-├── README.md                            # 本文件
+├── SKILL.md                          # (必须) Codex skill 入口
+├── agents/
+│   └── openai.yaml                   # (必须) Codex 接口配置
+├── references/                       # (可选) 审查标准参考文档
+│   ├── review-spec.md                # Spec 审查 P0/P1/P2 标准
+│   ├── review-plan.md                # Plan 审查 P0/P1/P2 标准
+│   └── review-exec.md                # 执行/代码审查 P0/P1/P2 标准
+├── scripts/                          # (可选) 辅助脚本
+├── assets/                           # (可选) 模板、图片等资源
+├── docs/                             # (可选) 产品文档（不随仓库提交）
+│   ├── PRD.md
+│   ├── IMPLEMENTATION_PLAN.md
+│   └── agents.md
+├── README.md                         # 本文件
 ├── package.json
 └── .gitignore
 ```
@@ -130,7 +129,54 @@ ai-coding-workflow/
 
 ### 安装
 
-将本 skill 目录放入目标项目的 `.agents/skills/` 下（或保持本仓库结构），Codex 会自动识别 `.agents/skills/ai-coding-workflow/SKILL.md`。
+#### 方式一：通过 `skills` CLI 安装（推荐）
+
+使用 [vercel-labs/skills](https://github.com/vercel-labs/skills) 的 `skills` CLI，支持 Codex / Claude Code / Cursor 等多 agent。
+
+```bash
+# 项目级安装（推荐，仅对当前项目生效）
+npx skills add pocoui/ai-coding-workflow
+
+# 全局安装（所有项目可用）
+npx skills add pocoui/ai-coding-workflow -g
+
+# 指定目标 agent 为 codex
+npx skills add pocoui/ai-coding-workflow -a codex
+
+# 非交互式（CI/CD 友好）
+npx skills add pocoui/ai-coding-workflow -a codex -y
+```
+
+其他管理命令：
+
+```bash
+npx skills list           # 列出已安装 skill
+npx skills find <keyword> # 搜索 skill
+npx skills update [name]  # 更新 skill
+npx skills remove [name]  # 移除 skill
+```
+
+#### 方式二：通过 Codex 内置 skill-installer
+
+在 Codex 交互模式中直接输入：
+
+```
+$skill-installer pocoui/ai-coding-workflow
+```
+
+会自动 clone 到 `~/.codex/skills/`，Codex 会自动检测新 skill（无需重启）。
+
+#### 方式三：手动 clone（离线/自定义场景）
+
+```bash
+# 项目级
+git clone https://github.com/pocoui/ai-coding-workflow.git .agents/skills/ai-coding-workflow
+
+# 全局
+git clone https://github.com/pocoui/ai-coding-workflow.git ~/.codex/skills/ai-coding-workflow
+```
+
+> 注意：手动 clone 时需保证 `SKILL.md` 位于 `.agents/skills/ai-coding-workflow/`（项目级）或 `~/.codex/skills/ai-coding-workflow/`（全局）目录下。
 
 ### 使用
 

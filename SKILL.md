@@ -15,23 +15,20 @@ description: 完整的软件开发工作流 skill。用户输入文本需求后�
 
 ## Skill 目录结构
 
-`ai-coding-workflow` 遵循标准 Codex skill 目录格式：
+`ai-coding-workflow` 遵循标准 Codex skill 仓库格式，仓库根目录即为 skill 根：
 
 ```
-ai-coding-workflow/
-├── .agents/
-│   └── skills/
-│       └── ai-coding-workflow/        # (必须) 本 skill 的独立文件夹
-│           ├── SKILL.md                # (必须) 技能核心入口，包含描述和触发词
-│           ├── agents/
-│           │   └── openai.yaml         # (必须) Codex 接口配置
-│           ├── references/             # (可选) 参考文档，供按需加载
-│           │   ├── review-spec.md
-│           │   ├── review-plan.md
-│           │   └── review-exec.md
-│           ├── scripts/                # (可选) 辅助脚本
-│           └── assets/                 # (可选) 模板、图片等资源
-├── docs/
+ai-coding-workflow/                  # 仓库根 = skill 根
+├── SKILL.md                          # (必须) 技能核心入口，包含描述和触发词
+├── agents/
+│   └── openai.yaml                   # (必须) Codex 接口配置
+├── references/                       # (可选) 参考文档，供按需加载
+│   ├── review-spec.md
+│   ├── review-plan.md
+│   └── review-exec.md
+├── scripts/                          # (可选) 辅助脚本
+├── assets/                           # (可选) 模板、图片等资源
+├── docs/                             # (可选) 产品文档（不随仓库提交）
 │   ├── PRD.md
 │   ├── IMPLEMENTATION_PLAN.md
 │   └── agents.md
@@ -43,10 +40,10 @@ ai-coding-workflow/
 
 | 路径 | 说明 |
 |------|------|
-| `.agents/skills/ai-coding-workflow/SKILL.md` | skill 入口，由 Codex 加载执行。包含技能名称、描述、触发条件、完整工作流步骤 |
-| `.agents/skills/ai-coding-workflow/references/` | 参考文档，校验角色在生成 spec/plan 时可按需加载（P0/P1/P2 审查标准） |
-| `.agents/skills/ai-coding-workflow/scripts/` | 辅助脚本，如 git 操作封装、文件生成模板处理等 |
-| `.agents/skills/ai-coding-workflow/assets/` | 静态资源，如 spec/plan 模板文件、示例代码片段 |
+| `SKILL.md` | skill 入口，由 Codex 加载执行。包含技能名称、描述、触发条件、完整工作流步骤 |
+| `references/` | 参考文档，校验角色在生成 spec/plan 时可按需加载（P0/P1/P2 审查标准） |
+| `scripts/` | 辅助脚本，如 git 操作封装、文件生成模板处理等 |
+| `assets/` | 静态资源，如 spec/plan 模板文件、示例代码片段 |
 
 ## 工作流总览
 
@@ -76,17 +73,17 @@ ai-coding-workflow/
 
 > **建议**：将 `.ai-coding/temp/` 添加到项目的 `.gitignore` 中（运行时状态如 `state.json` 包含时间戳、路径等本地信息，不应提交），而 `.ai-coding/history/` 可以根据需要选择性提交以保留开发记录。
 
-### 2. Skill 源文件目录（.agents/skills/ai-coding-workflow/）
+### 2. Skill 仓库根目录
 
-本 skill 的源代码遵循标准 skill 仓库格式，位于 `.agents/skills/ai-coding-workflow/` 目录下：
+本 skill 的源代码遵循标准 skill 仓库格式，仓库根目录即为 skill 根：
 
 | 路径 | 必选/可选 | 说明 |
 |------|-----------|------|
-| `.agents/skills/ai-coding-workflow/SKILL.md` | **必选** | 技能核心入口，包含完整的工作流定义 |
-| `.agents/skills/ai-coding-workflow/agents/openai.yaml` | **必选** | Codex 接口配置 |
-| `.agents/skills/ai-coding-workflow/references/` | 可选 | 参考文档，供校验角色按需加载 |
-| `.agents/skills/ai-coding-workflow/scripts/` | 可选 | 辅助脚本（.py、.sh、.js 等） |
-| `.agents/skills/ai-coding-workflow/assets/` | 可选 | 模板、图片等静态资源 |
+| `SKILL.md` | **必选** | 技能核心入口，包含完整的工作流定义 |
+| `agents/openai.yaml` | **必选** | Codex 接口配置 |
+| `references/` | 可选 | 参考文档，供校验角色按需加载 |
+| `scripts/` | 可选 | 辅助脚本（.py、.sh、.js 等） |
+| `assets/` | 可选 | 模板、图片等静态资源 |
 | `docs/` | 可选 | 产品文档（PRD、开发计划、代理指引） |
 
 ## 初始化信息生成
