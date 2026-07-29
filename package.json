@@ -1,0 +1,15 @@
+{
+  "name": "ai-coding-workflow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "面向 OpenAI Codex CLI 的自动化软件开发工作流 Skill，将模糊需求转化为可追溯、可验证、可交付的代码变更。",
+  "keywords": [
+    "codex",
+    "skill",
+    "workflow",
+    "spec",
+    "plan",
+    "ai-coding"
+  ],
+  "license": "MIT"
+}
