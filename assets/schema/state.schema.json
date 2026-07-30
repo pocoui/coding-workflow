@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-coding-workflow/schemas/state.schema.json",
+  "title": "Workflow State",
+  "description": "ai-coding-workflow 工作流状态文件契约（事实来源）",
+  "type": "object",
+  "required": ["version", "vId", "name", "shortId", "status", "step", "createdAt", "updatedAt"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "state.json schema 版本，当前固定为 1"
+    },
+    "vId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "需求 ID，格式 {name}_{shortId}"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "需求名称（≤10 字中文）"
+    },
+    "shortId": {
+      "type": "string",
+      "pattern": "^[a-zA-Z]{10}$",
+      "description": "10 位随机字母（大小写敏感）"
+    },
+    "step": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "大阶段编号（0=未开始, 2=初始化, 3=spec, 4=plan, 5=执行, 6=推送）"
+    },
+    "status": {
+      "enum": [
+        "initialized",
+        "spec_reviewing",
+        "spec_confirming",
+        "plan_reviewing",
+        "plan_confirming",
+        "executing",
+        "acceptance",
+        "accepted",
+        "completed"
+      ],
+      "description": "当前工作流状态"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "specPath": {
+      "type": ["string", "null"],
+      "description": "spec.md 路径（相对项目根）"
+    },
+    "planPath": {
+      "type": ["string", "null"],
+      "description": "plan.md 路径（相对项目根）"
+    },
+    "currentStep": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "plan 中的当前步骤序号（仅 step=5 时使用）"
+    },
+    "waitingFor": {
+      "type": ["string", "null"],
+      "description": "等待用户输入标记（如 user_supplement），null 表示不等待"
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowedPaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "允许修改的文件/目录路径列表"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "type": "string",
+          "description": "证据目录路径（相对项目根）"
+        }
+      }
+    }
+  }
+}

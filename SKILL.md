@@ -26,8 +26,15 @@ ai-coding-workflow/                  # 仓库根 = skill 根
 │   ├── review-spec.md
 │   ├── review-plan.md
 │   └── review-exec.md
-├── scripts/                          # (可选) 辅助脚本
+├── scripts/                          # (可选) 辅助脚本（零依赖，仅用 Node.js 内置模块）
+│   ├── workflow.mjs                  # 核心脚本强制层（状态流转/文件范围/证据采集）
+│   ├── validate.mjs                  # JSON Schema 校验器
+│   └── render.mjs                    # JSON → Markdown 渲染器
 ├── assets/                           # (可选) 模板、图片等资源
+│   └── schema/                       # JSON Schema 契约（产物结构定义）
+│       ├── state.schema.json
+│       ├── spec.schema.json
+│       └── plan.schema.json
 ├── docs/                             # (可选) 产品文档（不随仓库提交）
 │   ├── PRD.md
 │   ├── IMPLEMENTATION_PLAN.md
@@ -42,8 +49,10 @@ ai-coding-workflow/                  # 仓库根 = skill 根
 |------|------|
 | `SKILL.md` | skill 入口，由 Codex 加载执行。包含技能名称、描述、触发条件、完整工作流步骤 |
 | `references/` | 参考文档，校验角色在生成 spec/plan 时可按需加载（P0/P1/P2 审查标准） |
-| `scripts/` | 辅助脚本，如 git 操作封装、文件生成模板处理等 |
-| `assets/` | 静态资源，如 spec/plan 模板文件、示例代码片段 |
+| `scripts/workflow.mjs` | 核心脚本强制层：状态流转校验、文件范围校验、验证命令执行、证据采集 |
+| `scripts/validate.mjs` | JSON Schema 校验器：校验 state/spec/plan 是否符合契约 |
+| `scripts/render.mjs` | 视图渲染器：将 spec.json/plan.json 渲染为 Markdown 视图 |
+| `assets/schema/` | JSON Schema 契约：state/spec/plan 的结构定义 |
 
 ## 工作流总览
 
@@ -61,14 +70,25 @@ ai-coding-workflow/                  # 仓库根 = skill 根
 .ai-coding/
 ├── temp/           # 存放本次需求缓存（工作完成后移到 history）
 │   └── {vId}/
-│       ├── state.json              # 状态文件
-│       ├── spec.md                # 规格文档
-│       └── plan.md                # 执行计划
+│       ├── state.json              # 状态文件（含 version/evidence 字段）
+│       ├── spec.json               # 规格文档 JSON（事实来源）
+│       ├── spec.md                 # 规格文档 Markdown（脚本渲染，禁止手改）
+│       ├── plan.json               # 执行计划 JSON（事实来源）
+│       ├── plan.md                 # 执行计划 Markdown（脚本渲染，禁止手改）
+│       ├── spec-suggest.md         # 校验建议（临时，校验通过后删除）
+│       ├── plan-suggest.md         # 校验建议（临时，校验通过后删除）
+│       └── evidence/               # 执行证据目录
+│           ├── {stepId}-before.json  # 步骤前文件 hash 快照
+│           ├── {stepId}-result.json  # 验证命令输出
+│           └── {stepId}-after.patch  # 步骤后 diff patch
 └── history/        # 存放历史生成记录
     └── {vId}/      # 验收通过后从 temp 移入
         ├── state.json
+        ├── spec.json
         ├── spec.md
-        └── plan.md
+        ├── plan.json
+        ├── plan.md
+        └── evidence/
 ```
 
 > **建议**：将 `.ai-coding/temp/` 添加到项目的 `.gitignore` 中（运行时状态如 `state.json` 包含时间戳、路径等本地信息，不应提交），而 `.ai-coding/history/` 可以根据需要选择性提交以保留开发记录。
@@ -100,6 +120,7 @@ ai-coding-workflow/                  # 仓库根 = skill 根
 
 ```json
 {
+  "version": 1,
   "vId": "登录功能_aBcDeFgHiJ",
   "name": "登录功能",
   "shortId": "aBcDeFgHiJ",
@@ -113,13 +134,21 @@ ai-coding-workflow/                  # 仓库根 = skill 根
   "waitingFor": null,
   "plan": {
     "allowedPaths": []
+  },
+  "evidence": {
+    "dir": ".ai-coding/temp/登录功能_aBcDeFgHiJ/evidence"
   }
 }
 ```
 
+| 字段 | 说明 |
+|------|------|
+| `version` | 状态文件版本号，**固定为 1**，用于后续版本兼容性判断（脚本 `load-state` 会校验此字段） |
+| `evidence` | 证据目录配置，`evidence.dir` 指向本次任务的执行证据目录路径，由 `snapshot-before` / `snapshot-after` 写入快照、验证输出、diff patch |
+
 > `waitingFor`：可选字段，等待用户输入时标记等待状态（如 `"user_supplement"`），值为 `null` 表示不在等待状态。配合中断恢复使用：恢复时检查此字段，跳转到对应的补充输入环节。
 
-`plan.allowedPaths` 在 plan 确认通过时写入（详见 Step 4.4），记录本次开发允许修改/新增的所有文件和目录路径，用于 Step 5 执行时的文件范围校验。
+`plan.allowedPaths` 在 plan 确认通过时写入（详见 Step 4.4），记录本次开发允许修改/新增的所有文件和目录路径，用于 Step 5 执行时的文件范围校验。脚本 `check-scope` 会基于此字段做机器级校验。
 
 ### 状态流转
 
@@ -170,21 +199,23 @@ initialized → spec_reviewing → spec_confirming → plan_reviewing → plan_c
 
 执行以下操作：
 
-1. 创建目录 `.ai-coding/temp/`（如果不存在）
-2. 创建目录 `.ai-coding/history/`（如果不存在）
-3. 生成 `name`（需求总结，≤10字中文）、`shortId`（10位随机字母）、`vId`（`{name}_{shortId}`）
-4. 创建目录 `.ai-coding/temp/{vId}/`
-5. 写入 `.ai-coding/temp/{vId}/state.json`，`status` 设为 `"initialized"`
-6. 告知用户初始化完成，显示 `vId`
+1. 生成 `name`（需求总结，≤10字中文）、`shortId`（10位随机字母）、`vId`（`{name}_{shortId}`）
+2. 调用 `node scripts/workflow.mjs init <项目根目录> <vId> <name> <shortId>` 初始化
+   - 脚本自动创建 `.ai-coding/temp/{vId}/`、`.ai-coding/history/`、`.ai-coding/temp/{vId}/evidence/` 目录
+   - 脚本原子写入 `state.json`（含 `version: 1`、`status: "initialized"`、`evidence.dir` 等字段）
+   - 执行时的工作目录是目标项目根，脚本路径相对于 skill 仓库根
+3. 告知用户初始化完成，显示 `vId`
 
 ### Step 3：Spec 生成
 
 spec 生成阶段由**两个独立角色**协作完成（注意：每次循环都启动新的角色实例，角色名仅描述职责）：
 
-- **spec-generator**：负责初始生成 spec.md，以及根据校验建议修补 spec.md
-- **spec-reviewer**：负责校验 spec.md，生成 `spec-suggest.md`（校验建议文件）
+- **spec-generator**：负责初始生成 spec.json（事实来源），以及根据校验建议修补 spec.json
+- **spec-reviewer**：负责校验 spec.md（脚本渲染的 Markdown 视图），生成 `spec-suggest.md`（校验建议文件）
 
 主流程充当编排者，驱动"生成 → 校验 → 修补 → 再校验"的循环。
+
+> **关键约束**：`spec.json` 是事实来源，`spec.md` 由 `render.mjs` 渲染生成（**禁止手改**）。所有修补都作用于 `spec.json`，修补后必须重新渲染 `spec.md`。
 
 #### 3.1 初始生成（spec-generator）
 
@@ -193,20 +224,32 @@ spec 生成阶段由**两个独立角色**协作完成（注意：每次循环�
 **spec-generator 的职责：**
 
 1. 读取项目上下文和用户需求
-2. 生成规格文档 `spec.md`，内容应包含：
-   - **背景与目标**：为什么要做？成功标准是什么
-   - **功能规格**：详细功能描述、输入/输出、边界情况
-   - **非功能规格**：性能、安全、兼容性等要求
-   - **技术方案**：架构决策、技术选型、依赖关系
-   - **文件结构**：预计创建/修改的文件列表
-3. 写入 `.ai-coding/temp/{vId}/spec.md`
+2. 生成规格文档 `spec.json`（JSON 格式，符合 `assets/schema/spec.schema.json` 契约），字段结构：
+   - `title`：需求标题
+   - `background`：背景与动机
+   - `goal`：目标与成功标准
+   - `features`：功能规格列表，每个含 `name` / `description` / `inputs` / `outputs` / `edgeCases`
+   - `nonFunctional`：非功能需求（性能、安全、兼容性等）
+   - `technicalApproach`：技术方案（架构决策、技术选型、依赖关系）
+   - `fileStructure`：预计创建/修改的文件列表
+   - `acceptance`：验收标准
+   - `openQuestions`：开放问题
+3. 写入 `.ai-coding/temp/{vId}/spec.json`
 4. 向主流程报告完成
+
+主流程收到 spec-generator 完成报告后，依次执行：
+
+1. 调用 `node scripts/validate.mjs spec .ai-coding/temp/{vId}/spec.json` 校验 JSON 结构
+   - 退出码 0 = 通过；退出码 1 = 校验失败（需回到 spec-generator 修补）
+2. 调用 `node scripts/render.mjs spec .ai-coding/temp/{vId}/spec.json .ai-coding/temp/{vId}/spec.md` 渲染 Markdown 视图
+3. `spec.md` 是渲染产物，**禁止手改**；后续 reviewer 审查的是此 Markdown 视图
 
 **报告格式：**
 
 ```
 spec 生成完成 ✅
-路径：.ai-coding/temp/{vId}/spec.md
+JSON 路径：.ai-coding/temp/{vId}/spec.json
+Markdown 视图：.ai-coding/temp/{vId}/spec.md
 概要：[2-3 句话总结 spec 核心内容]
 主要涉及文件：file1, file2, ...
 ```
@@ -218,26 +261,27 @@ spec-generator 报告后，主流程启动校验循环，驱动 **spec-reviewer*
 ```
 循环（最多5轮）：
   1. 主流程启动 spec-reviewer
-  2. spec-reviewer 读取 .ai-coding/temp/{vId}/spec.md
+  2. spec-reviewer 读取 .ai-coding/temp/{vId}/spec.md（Markdown 视图）
   3. spec-reviewer 生成校验建议 → 写入 .ai-coding/temp/{vId}/spec-suggest.md
   4. spec-reviewer 向主流程报告完成
   5. 主流程读取 spec-suggest.md，判断：
      a. 无问题（或仅轻微措辞建议） → 删除 spec-suggest.md，退出循环 ✅
      b. 有实质性问题 → 进入第 6 步
   6. 主流程启动 spec-generator（修补模式），传递 spec-suggest.md 内容
-  7. spec-generator 读取 spec-suggest.md，逐条采纳建议并修改 spec.md
+  7. spec-generator 读取 spec-suggest.md，逐条采纳建议并修改 spec.json（事实来源）
   8. spec-generator 向主流程报告修补完成
-  9. 主流程删除 spec-suggest.md
-  10. 回到第 1 步进行下一轮校验
+  9. 主流程调用 validate.mjs + render.mjs 重新校验并渲染 spec.md（详见 3.1）
+  10. 主流程删除 spec-suggest.md
+  11. 回到第 1 步进行下一轮校验
 ```
 
 **各角色职责：**
 
 | 角色 | 职责 |
 |------|------|
-| **spec-reviewer** | 以独立、挑剔视角审视 spec.md，专注于找出遗漏、矛盾、不清晰之处。输出 `spec-suggest.md` 给主流程，不直接修改 spec.md |
-| **spec-generator（修补模式）** | 读取 `spec-suggest.md`，逐条评估并采纳合理建议，修改 `spec.md`。不质疑 reviewer 的发现，专注修补 |
-| **主流程** | 读取 `spec-suggest.md` 判断是否有实质性问题；驱动循环流程；管理临时文件 |
+| **spec-reviewer** | 以独立、挑剔视角审视 spec.md（Markdown 视图），专注于找出遗漏、矛盾、不清晰之处。输出 `spec-suggest.md` 给主流程，不直接修改 spec.json / spec.md |
+| **spec-generator（修补模式）** | 读取 `spec-suggest.md`，逐条评估并采纳合理建议，修改 `spec.json`（事实来源）。不质疑 reviewer 的发现，专注修补。**不直接修改 spec.md** |
+| **主流程** | 读取 `spec-suggest.md` 判断是否有实质性问题；驱动循环流程；管理临时文件；修补后调用脚本重新渲染 spec.md |
 
 > - 循环最多 **5 轮**，超过后强制退出
 > - spec-reviewer 每次都以"第一次审查"的心态重新审视，不要因为之前提过建议就放行
@@ -266,28 +310,26 @@ AI 校验循环结束后（无论正常退出还是达到 5 轮上限），主�
 > 5. 手动修改
 ```
 
-- **1 继续** → 更新 `state.json`（`status: "spec_confirming"`），进入 Step 4
-- **2 重新生成** → 重新进入 3.1（启动 spec-generator 重新生成），并告知用户上一版已被丢弃
-- **3 补充信息** → 更新 `state.json` 添加 `waitingFor: "user_supplement"` 字段标记等待状态，提示用户"请直接在对话框中输入需要补充的内容（例如遗漏的功能、修改的需求、新增的约束等）"，用户提供补充信息后清除 `waitingFor` 字段，重新启动 spec-generator（带上补充信息作为额外输入），然后再次进入 3.2 校验循环
+- **1 继续** → 调用 `node scripts/workflow.mjs transition <statePath> spec_confirming --step 3` 流转状态，进入 Step 4
+- **2 重新生成** → 重新进入 3.1（启动 spec-generator 重新生成 spec.json），并告知用户上一版已被丢弃
+- **3 补充信息** → 调用 `node scripts/workflow.mjs transition <statePath> spec_reviewing --waiting user_supplement` 标记等待状态，提示用户"请直接在对话框中输入需要补充的内容（例如遗漏的功能、修改的需求、新增的约束等）"，用户提供补充信息后调用 `transition --waiting null` 清除等待标记，重新启动 spec-generator（带上补充信息作为额外输入），然后再次进入 3.2 校验循环
 - **4 再次 AI 校验** → 重新进入 3.2 校验循环（spec-reviewer 再次审查当前 spec.md），完成后回到此界面
-- **5 手动修改** → 告知用户可直接编辑 `.ai-coding/temp/{vId}/spec.md` 文件，修改完成后输入"继续"回到此界面重新选择
+- **5 手动修改** → 告知用户可直接编辑 `.ai-coding/temp/{vId}/spec.json`（事实来源）。修改完成后由主流程调用 `validate.mjs` + `render.mjs` 重新渲染 spec.md，然后输入"继续"回到此界面重新选择
 
-用户选择"继续"后，更新 `state.json`：
+用户选择"继续"后，调用脚本流转状态：
 
-```json
-{
-  "status": "spec_confirming",
-  "step": 3,
-  "updatedAt": "..."
-}
+```
+node scripts/workflow.mjs transition <statePath> spec_confirming --step 3
 ```
 
 ### Step 4：Plan 生成
 
 plan 生成阶段与 spec 生成阶段采用相同的**双角色协作模式**（同样每次启动新的角色实例）：
 
-- **plan-generator**：负责初始生成 plan.md，以及根据校验建议修补 plan.md
-- **plan-reviewer**：负责校验 plan.md，生成 `plan-suggest.md`（校验建议文件）
+- **plan-generator**：负责初始生成 plan.json（事实来源），以及根据校验建议修补 plan.json
+- **plan-reviewer**：负责校验 plan.md（脚本渲染的 Markdown 视图），生成 `plan-suggest.md`（校验建议文件）
+
+> **关键约束**：`plan.json` 是事实来源，`plan.md` 由 `render.mjs` 渲染生成（**禁止手改**）。所有修补都作用于 `plan.json`，修补后必须重新渲染 `plan.md`。
 
 #### 4.1 初始生成（plan-generator）
 
@@ -295,25 +337,38 @@ plan 生成阶段与 spec 生成阶段采用相同的**双角色协作模式**�
 
 **plan-generator 的职责：**
 
-1. 读取已确认的 `.ai-coding/temp/{vId}/spec.md`
-2. 将开发过程拆解为**可独立提交的步骤**，每个步骤包含：
-   - **步骤序号与名称**
-   - **目标**：这个步骤要做什么
-   - **涉及文件**：需要创建或修改的文件列表
-   - **验收标准**：怎么知道这一步做完了（**关键约束：每步完成后必须能独立通过测试，不影响已有功能**）
-3. 写入 `.ai-coding/temp/{vId}/plan.md`
-4. 汇总所有步骤的"涉及文件"，形成 `allowedPaths` 列表
-5. 向主流程报告完成
+1. 读取已确认的 `.ai-coding/temp/{vId}/spec.json`（事实来源，含完整需求上下文）
+2. 生成执行计划 `plan.json`（JSON 格式，符合 `assets/schema/plan.schema.json` 契约），字段结构：
+   - `summary`：计划概述
+   - `steps`：步骤列表，每个步骤含：
+     - `id`：步骤序号
+     - `name`：步骤名称
+     - `goal`：目标（这个步骤要做什么，**关键约束：每步完成后必须能独立通过测试，不影响已有功能**）
+     - `files`：涉及文件列表（需要创建或修改的文件）
+     - `verification`：验收标准（怎么知道这一步做完了）
+     - `dependencies`：依赖的其他步骤 id
+     - `risk`：风险等级，取值 `"normal"` 或 `"guarded"`（`guarded` 表示受保护步骤，涉及敏感文件需人工确认）
+3. 写入 `.ai-coding/temp/{vId}/plan.json`
+4. 向主流程报告完成
+
+主流程收到 plan-generator 完成报告后，依次执行：
+
+1. 调用 `node scripts/validate.mjs plan .ai-coding/temp/{vId}/plan.json` 校验 JSON 结构
+   - 退出码 0 = 通过；退出码 1 = 校验失败（需回到 plan-generator 修补）
+2. 调用 `node scripts/render.mjs plan .ai-coding/temp/{vId}/plan.json .ai-coding/temp/{vId}/plan.md` 渲染 Markdown 视图
+3. `plan.md` 是渲染产物，**禁止手改**；后续 reviewer 审查的是此 Markdown 视图
 
 **报告格式：**
 
 ```
 plan 生成完成 ✅
-路径：.ai-coding/temp/{vId}/plan.md
+JSON 路径：.ai-coding/temp/{vId}/plan.json
+Markdown 视图：.ai-coding/temp/{vId}/plan.md
 步骤数：N 个步骤
-允许文件路径：[file1, dir2/, ...]
 概要：[各步骤名称简述]
 ```
+
+> `allowedPaths` 不再由 plan-generator 汇总报告，而是由主流程在 Step 4.4 从 `plan.json` 的 `steps[].files` 提取（机器级汇总，避免遗漏）。
 
 #### 4.2 AI 校验循环（主流程编排）
 
@@ -322,26 +377,27 @@ plan-generator 报告后，主流程启动校验循环，驱动 **plan-reviewer*
 ```
 循环（最多5轮）：
   1. 主流程启动 plan-reviewer
-  2. plan-reviewer 读取 .ai-coding/temp/{vId}/plan.md
+  2. plan-reviewer 读取 .ai-coding/temp/{vId}/plan.md（Markdown 视图）
   3. plan-reviewer 生成校验建议 → 写入 .ai-coding/temp/{vId}/plan-suggest.md
   4. plan-reviewer 向主流程报告完成
   5. 主流程读取 plan-suggest.md，判断：
      a. 无问题（或仅轻微措辞建议） → 删除 plan-suggest.md，退出循环 ✅
      b. 有实质性问题 → 进入第 6 步
   6. 主流程启动 plan-generator（修补模式），传递 plan-suggest.md 内容
-  7. plan-generator 读取 plan-suggest.md，逐条采纳建议并修改 plan.md
+  7. plan-generator 读取 plan-suggest.md，逐条采纳建议并修改 plan.json（事实来源）
   8. plan-generator 向主流程报告修补完成
-  9. 主流程删除 plan-suggest.md
-  10. 回到第 1 步进行下一轮校验
+  9. 主流程调用 validate.mjs + render.mjs 重新校验并渲染 plan.md（详见 4.1）
+  10. 主流程删除 plan-suggest.md
+  11. 回到第 1 步进行下一轮校验
 ```
 
 **各角色职责：**
 
 | 角色 | 职责 |
 |------|------|
-| **plan-reviewer** | 以独立、挑剔视角审视 plan.md，专注于检查步骤划分是否合理、文件是否完整、依赖顺序是否正确、是否存在遗漏。输出 `plan-suggest.md` 给主流程，不直接修改 plan.md |
-| **plan-generator（修补模式）** | 读取 `plan-suggest.md`，逐条评估并采纳合理建议，修改 `plan.md` |
-| **主流程** | 读取 `plan-suggest.md` 判断是否有实质性问题；驱动循环流程；管理临时文件 |
+| **plan-reviewer** | 以独立、挑剔视角审视 plan.md（Markdown 视图），专注于检查步骤划分是否合理、文件是否完整、依赖顺序是否正确、是否存在遗漏。输出 `plan-suggest.md` 给主流程，不直接修改 plan.json / plan.md |
+| **plan-generator（修补模式）** | 读取 `plan-suggest.md`，逐条评估并采纳合理建议，修改 `plan.json`（事实来源）。**不直接修改 plan.md** |
+| **主流程** | 读取 `plan-suggest.md` 判断是否有实质性问题；驱动循环流程；管理临时文件；修补后调用脚本重新渲染 plan.md |
 
 > - 循环最多 **5 轮**，超过后强制退出
 > - plan-reviewer 每次都以"第一次审查"的心态重新审视
@@ -371,16 +427,21 @@ AI 校验循环结束后（无论正常退出还是达到 5 轮上限），主�
 ```
 
 - **1 继续** → 进入 4.4
-- **2 重新生成** → 重新进入 4.1（启动 plan-generator 重新生成），并告知用户上一版已被丢弃
-- **3 补充信息** → 更新 `state.json` 添加 `waitingFor: "user_supplement"` 字段标记等待状态，提示用户"请直接在对话框中输入需要补充的内容（例如遗漏的步骤、修改的需求、新增的约束等）"，用户提供补充信息后清除 `waitingFor` 字段。如果补充信息涉及需求变更或 spec 调整，主流程应先引导用户更新 spec.md（回到 Step 3.3），然后再基于更新后的 spec 重新生成 plan。否则直接重新启动 plan-generator（带上补充信息作为额外输入），再次进入 4.2 校验循环
+- **2 重新生成** → 重新进入 4.1（启动 plan-generator 重新生成 plan.json），并告知用户上一版已被丢弃
+- **3 补充信息** → 调用 `node scripts/workflow.mjs transition <statePath> plan_reviewing --waiting user_supplement` 标记等待状态，提示用户"请直接在对话框中输入需要补充的内容（例如遗漏的步骤、修改的需求、新增的约束等）"，用户提供补充信息后调用 `transition --waiting null` 清除等待标记。如果补充信息涉及需求变更或 spec 调整，主流程应先引导用户更新 spec.json（回到 Step 3.3，并由脚本重新渲染 spec.md），然后再基于更新后的 spec 重新生成 plan。否则直接重新启动 plan-generator（带上补充信息作为额外输入），再次进入 4.2 校验循环
 - **4 再次 AI 校验** → 重新进入 4.2 校验循环（plan-reviewer 再次审查当前 plan.md），完成后回到此界面
-- **5 手动修改** → 告知用户可直接编辑 `.ai-coding/temp/{vId}/plan.md` 文件。如果新增或修改了涉及文件，需同步更新 `state.json` 中的 `plan.allowedPaths`。修改完成后输入"继续"回到此界面重新选择
+- **5 手动修改** → 告知用户可直接编辑 `.ai-coding/temp/{vId}/plan.json`（事实来源）。修改完成后由主流程调用 `validate.mjs` + `render.mjs` 重新渲染 plan.md，然后输入"继续"回到此界面重新选择（`plan.allowedPaths` 由 4.4 自动从 plan.json 提取，无需手动维护）
 
 #### 4.4 写入状态与文件范围
 
 用户选择"继续"后：
 
-1. **写入 allowedPaths**：将 plan-generator（最新修补后）报告的 `allowedPaths` 写入 `state.json`：
+1. **从 plan.json 提取 allowedPaths**：读取最新修补后的 `plan.json`，遍历 `steps[].files` 汇总所有文件路径，去重后形成 `allowedPaths` 列表
+2. **写入 state.json 并流转状态**：调用脚本一次性完成 `allowedPaths` 写入和状态流转：
+   ```
+   node scripts/workflow.mjs transition <statePath> plan_confirming --step 4
+   ```
+   脚本会在原子写入 `status: "plan_confirming"`、`step: 4` 的同时，将提取的 `allowedPaths` 写入 `state.json.plan.allowedPaths`。最终 `state.json` 形如：
    ```json
    {
      "status": "plan_confirming",
@@ -397,8 +458,8 @@ AI 校验循环结束后（无论正常退出还是达到 5 轮上限），主�
      "updatedAt": "..."
    }
    ```
-   > 路径可以是文件或目录。如果是目录，表示该目录下所有文件都在允许范围内。
-2. 告知用户文件范围已锁定，进入 Step 5
+   > 路径可以是文件或目录。如果是目录，表示该目录下所有文件都在允许范围内。脚本 `check-scope` 在 Step 5 会基于此字段做机器级校验。
+3. 告知用户文件范围已锁定，进入 Step 5
 
 ### Step 5：执行与测试
 
@@ -415,55 +476,63 @@ AI 校验循环结束后（无论正常退出还是达到 5 轮上限），主�
 
 然后启动 **Execution**，传递以下信息：
 
-- `plan.md` 路径：`.ai-coding/temp/{vId}/plan.md`
-- `state.json` 路径：`.ai-coding/temp/{vId}/state.json`（含 `allowedPaths`）
+- `plan.json` 路径：`.ai-coding/temp/{vId}/plan.json`（事实来源，含 `steps[].files` / `verification` / `risk`）
+- `plan.md` 路径：`.ai-coding/temp/{vId}/plan.md`（人类可读视图）
+- `state.json` 路径：`.ai-coding/temp/{vId}/state.json`（含 `allowedPaths` 与 `evidence.dir`）
 - 项目根目录上下文
 - 工作模式：Execution 直接操作项目文件（非隔离 worktree），`git` 命令在项目根目录执行
 
 **Execution 的职责：**
 
-Execution 按 plan.md 中的步骤**逐个**执行，每步流程如下：
+Execution 按 plan.json 中的 steps **逐个**执行，每步流程如下：
 
 ```
-每步循环：
+每步循环（以步骤 N 为例，stepId = N）：
   1. 告知主流程："开始执行 Step N: [名称]"
-  2. 📐 **预先声明**：列出本步骤计划创建/修改的所有文件
-  3. 📐 **预先校验**：验证计划文件是否在 allowedPaths 范围内
-     - 使用 `git status --porcelain` 检查当前工作区是否干净（确保无遗留变更）
-       - ✅ 干净 → 继续执行
-       - ❌ 有未提交变更 → 判断变更来源：
-         - 属于上一步骤的残留 → 询问用户是否丢弃（`git checkout --` / `git restore`）
-         - 属于被 `.gitignore` 忽略的文件 → 自动跳过
-         - 无法判断 → 告知主流程并暂停
-     - 逐一验证每个计划文件：
-       - 匹配项目 `.gitignore` 中任意规则的路径 → **自动豁免**（被 git 忽略的文件不应触发越界）
-       - 以 `.ai-coding/` 开头的路径 → **自动豁免**（工作流自身状态文件始终允许修改）
-       - 其他路径 → 检查是否在 state.json.plan.allowedPaths 范围内
-         （文件路径匹配任意条目，或以某条目录条目为前缀）
-     - ✅ 全部在范围内 → 继续执行
-     - ❌ 存在越界 → 告知主流程并停止，说明越界文件详情
-  4. 实现：编写代码实现该步骤的目标
-  5. 📐 **实现后校验**：使用 `git status --porcelain` 获取实际变更文件，逐一验证是否在 allowedPaths 范围内
+  2. 📐 **预先声明**：从 plan.json 读取本步骤的 files 列表，列出本步骤计划创建/修改的所有文件
+  3. 📐 **预先校验（脚本强制）**：
+     a. 工作区洁净检查：使用 `git status --porcelain` 检查当前工作区是否干净（确保无遗留变更）
+        - ✅ 干净 → 继续
+        - ❌ 有未提交变更 → 判断变更来源：
+          - 属于上一步骤的残留 → 询问用户是否丢弃（`git checkout --` / `git restore`）
+          - 属于被 `.gitignore` 忽略的文件 → 自动跳过
+          - 无法判断 → 告知主流程并暂停
+     b. 文件范围校验：调用 `node scripts/workflow.mjs check-scope <statePath> <file1> [file2...]`
+        - 脚本自动豁免 `.ai-coding/` 路径和被 `.gitignore` 匹配的路径
+        - 其他路径必须落在 `state.json.plan.allowedPaths` 范围内
+        - 退出码 0 = 全部在范围；退出码 1 = 存在越界
+        - ❌ 越界 → 告知主流程并停止，说明越界文件详情
+  4. 📸 **执行前快照（脚本强制）**：调用 `node scripts/workflow.mjs snapshot-before <statePath> <stepId> <file1> [file2...]`
+     - 脚本将本步骤涉及文件的 hash 快照写入 `{evidence.dir}/{stepId}-before.json`
+  5. 实现：编写代码实现该步骤的目标
+  6. 📐 **实现后校验（脚本强制）**：使用 `git status --porcelain` 获取实际变更文件，再次调用 `check-scope` 校验
      - ✅ 全部在范围内 → 继续
      - ❌ 存在越界 → 回退越界文件（git restore 或 git checkout --），告知主流程
-  6. 🔍 **分层验证**：
+  7. 🔍 **分层验证**（按"编译/Lint 自动检测"规则匹配命令）：
      - ① 编译/类型检查（如 tsc --noEmit、go build、cargo check）
      - ② Linter 检查（如 eslint、staticcheck、cargo clippy）
-     - 根据项目工具链自动选择验证方式（见下方"编译/Lint 自动检测"规则）
-  7. ✅ **运行测试**（按"测试命令自动检测"规则匹配项目测试命令）：
-     - ✅ 通过 → 继续下一步
-     - ❌ 失败 → 停止并向主流程报告失败详情（准确定位到问题步骤）
-  8. Git 提交：git commit，提交信息采用 Conventional Commits 格式：
-     <type>: <≤50字中文描述>
-     type 取值为 feat / fix / refactor / test / docs / chore，根据实际变更类型选择
-     示例：feat: 添加用户登录接口
-           fix: 修复 token 过期未处理的问题
-           refactor: 提取通用 auth 中间件
-  9. 更新 state.json：
-     - step: 5（在整个执行阶段保持不变，表示处于第 5 大阶段）
-     - currentStep: N（更新为当前 plan 步骤序号）
-     - 告知主流程："Step N 完成 ✅"
+     - 每条验证命令调用 `node scripts/workflow.mjs run-verify [--cwd <dir>] <command...>` 执行
+       - 脚本透传退出码：0 = 通过，非 0 = 失败（输出存档到 `{evidence.dir}/{stepId}-result.json`）
+     - 无编译步骤的语言自动跳过；无 linter 配置时自动跳过
+  8. ✅ **运行测试**（按"测试命令自动检测"规则匹配项目测试命令）：
+     - 调用 `node scripts/workflow.mjs run-verify [--cwd <dir>] <test-command...>` 执行
+     - ✅ 通过（退出码 0）→ 继续下一步
+     - ❌ 失败（退出码非 0）→ 停止并向主流程报告失败详情（准确定位到问题步骤）
+  9. 📸 **执行后证据（脚本强制）**：调用 `node scripts/workflow.mjs snapshot-after <statePath> <stepId>`
+     - 脚本对比 step 的 before/after hash，生成 diff patch 写入 `{evidence.dir}/{stepId}-after.patch`
+  10. Git 提交：git commit，提交信息采用 Conventional Commits 格式：
+      <type>: <≤50字中文描述>
+      type 取值为 feat / fix / refactor / test / docs / chore，根据实际变更类型选择
+      示例：feat: 添加用户登录接口
+            fix: 修复 token 过期未处理的问题
+            refactor: 提取通用 auth 中间件
+  11. **状态流转（脚本强制）**：调用 `node scripts/workflow.mjs transition <statePath> executing --current-step N`
+      - 脚本原子更新 `status: "executing"`、`currentStep: N`、`updatedAt`
+      - step 字段在整个执行阶段保持为 5（不传 --step 则保持不变）
+  12. 告知主流程："Step N 完成 ✅"
 ```
+
+> **受保护步骤（guarded）**：若 `plan.json` 中某步骤的 `risk` 字段为 `"guarded"`，Execution 在第 5 步实现前应先暂停并请求人工确认（涉及敏感文件如配置、迁移脚本、CI 等），确认后再继续。
 
 **报告格式（正常完成）：**
 
@@ -612,10 +681,13 @@ Execution 按 plan.md 中的步骤**逐个**执行，每步流程如下：
 
 ## 中断恢复机制
 
-整个流程支持断点恢复。启动时，主流程检查 `.ai-coding/temp/` 目录：
+整个流程支持断点恢复。启动时，主流程通过脚本扫描和恢复：
 
-1. 如果 `.ai-coding/temp/` 中**不存在**任何 `{vId}` 子目录 → 正常启动新工作流
-2. 如果 `.ai-coding/temp/` 中**存在** `{vId}` 子目录，且 `state.json` 的 `status` 不是 `"accepted"` 或 `"completed"`：
+1. **扫描未完成任务**：调用 `node scripts/workflow.mjs list-tasks <workDir>`（`<workDir>` 为目标项目根目录）
+   - 脚本扫描 `.ai-coding/temp/` 下所有 `{vId}` 子目录，过滤出 `status` 非 `accepted` / `completed` 的任务
+   - 输出每个任务的 `vId` / `name` / `status` / `step` / `updatedAt`
+2. 如果**输出为空**（不存在任何未完成子目录）→ 正常启动新工作流
+3. 如果**存在未完成任务**：
    - **单个未完成** → 直接询问用户是否继续
    - **多个未完成** → 列出所有未完成的 `{vId}`（含需求名、状态、上次更新时间），让用户选择恢复其中一个（**其他未完成需求保留在 `.ai-coding/temp/` 中，可下次恢复**），或选择"开始新的需求"：
      ```
@@ -637,19 +709,20 @@ Execution 按 plan.md 中的步骤**逐个**执行，每步流程如下：
    > 1. 继续
    > 2. 丢弃并开始新的需求
    ```
-   - **1 继续** → 读取 `state.json`，先检查 `waitingFor` 字段：
+   - **1 继续** → 调用 `node scripts/workflow.mjs resume <statePath>` 获取下一步动作指引
+     - 脚本输出包含 `resumePoint`（恢复点）和 `nextAction`（下一步动作建议），主流程据此跳转：
      - `waitingFor: "user_supplement"` → 从对应的补充信息环节继续，提示用户输入补充信息
      - `waitingFor` 为 `null` 或不存在 → 根据 `status` 正常跳转
      - `spec_reviewing` → 检测 `.ai-coding/temp/{vId}/spec-suggest.md` 是否存在且有实质性问题：
-       - 是 → 从 Step **3.2 AI 校验循环**继续（启动 spec-generator 修补模式）
+       - 是 → 从 Step **3.2 AI 校验循环**继续（启动 spec-generator 修补 spec.json，重新渲染 spec.md）
        - 否 → 从 Step **3.3 用户确认**继续（校验已完成，直接展示确认界面）
      - `spec_confirming` → 从 Step 3.3 用户确认继续
      - `plan_reviewing` → 检测 `.ai-coding/temp/{vId}/plan-suggest.md` 是否存在且有实质性问题：
-       - 是 → 从 Step **4.2 AI 校验循环**继续（启动 plan-generator 修补模式）
+       - 是 → 从 Step **4.2 AI 校验循环**继续（启动 plan-generator 修补 plan.json，重新渲染 plan.md）
        - 否 → 从 Step **4.3 用户确认**继续（校验已完成，直接展示确认界面）
      - `plan_confirming` → 从 Step 4.3 用户确认继续
      - `executing` → 从 Step 5 继续：
-       1. 读取 `plan.md`，定位到 `currentStep + 1` 步骤的内容
+       1. 读取 `plan.json`，定位到 `currentStep + 1` 步骤的内容
        2. 检查工作区状态：
           - 工作区干净 → 正常从 `currentStep + 1` 开始执行
           - 有未提交变更（上次中断遗留） → 判断变更是否属于当前步骤的预期工作：
@@ -659,6 +732,88 @@ Execution 按 plan.md 中的步骤**逐个**执行，每步流程如下：
        如果 `currentStep` 为空（未完成任何步骤就中断），从 Step 1 开始
      - `acceptance` → 从 Step 5 验收继续
    - **2 丢弃** → 删除对应的 `.ai-coding/temp/{vId}/` 目录，正常启动新工作流
+
+## 脚本命令参考
+
+所有脚本位于 skill 仓库根的 `scripts/` 目录下，零依赖（仅用 Node.js 内置模块）。**脚本路径相对于 skill 仓库根，但执行时的工作目录是目标项目根**。所有命令通过退出码判定结果：`0` = 通过/成功，`1` = 不通过/失败（部分命令除外，见下文）。
+
+### workflow.mjs — 核心脚本强制层
+
+```
+node scripts/workflow.mjs init <workDir> <vId> <name> <shortId>
+```
+初始化 state.json，创建 `.ai-coding/temp/{vId}/`、`.ai-coding/history/`、`.ai-coding/temp/{vId}/evidence/` 目录，原子写入 state.json（含 `version: 1`、`status: "initialized"`、`evidence.dir` 等字段）。
+
+```
+node scripts/workflow.mjs load-state <statePath>
+```
+加载并输出 state.json（含 `version` 版本校验）。退出码 0 = 加载成功，非 0 = 文件缺失或版本不兼容。
+
+```
+node scripts/workflow.mjs require-state <statePath> <status1> [status2...]
+```
+校验当前 `status` 是否在允许列表中。退出码 0 = 通过（当前状态在列表中），1 = 不通过。
+
+```
+node scripts/workflow.mjs transition <statePath> <newStatus> [--step N] [--current-step N] [--waiting <value>]
+```
+状态流转：校验 `oldStatus → newStatus` 合法性 + 原子写入。可选参数：
+- `--step N`：更新 `step` 字段为大阶段编号
+- `--current-step N`：更新 `currentStep` 字段为 plan 步骤序号
+- `--waiting <value>`：设置 `waitingFor` 字段（传 `null` 清除）
+退出码 0 = 流转成功，1 = 非法流转或写入失败。
+
+```
+node scripts/workflow.mjs check-scope <statePath> <file1> [file2...]
+```
+文件范围校验：检查传入的文件路径是否全部落在 `state.json.plan.allowedPaths` 范围内。**`.ai-coding/` 开头的路径和被项目 `.gitignore` 匹配的路径自动豁免**。退出码 0 = 全部在范围内，1 = 存在越界。
+
+```
+node scripts/workflow.mjs run-verify [--cwd <dir>] <command...>
+```
+执行验证命令并透传退出码。`--cwd` 指定工作目录（默认当前目录），`<command...>` 为要执行的命令及其参数（多参数空格分隔）。退出码 = 子进程退出码（0 = 通过，非 0 = 失败），输出存档到 `{evidence.dir}/{stepId}-result.json`（如配置了 evidence 目录）。
+
+```
+node scripts/workflow.mjs snapshot-before <statePath> <stepId> <file1> [file2...]
+```
+执行步骤前采集文件 hash 快照，写入 `{evidence.dir}/{stepId}-before.json`。退出码 0 = 成功，1 = 失败。
+
+```
+node scripts/workflow.mjs snapshot-after <statePath> <stepId>
+```
+执行步骤后生成 diff patch 证据：对比同 `stepId` 的 before 快照，写入 `{evidence.dir}/{stepId}-after.patch`。退出码 0 = 成功，1 = 失败。
+
+```
+node scripts/workflow.mjs list-tasks <workDir>
+```
+列出所有活跃任务（`status` 非 `accepted` / `completed`）。输出每个任务的 `vId` / `name` / `status` / `step` / `updatedAt`。退出码 0 = 成功。
+
+```
+node scripts/workflow.mjs resume <statePath>
+```
+恢复中断任务：输出 `resumePoint`（恢复点标识）和 `nextAction`（下一步动作建议），主流程据此跳转到对应步骤。退出码 0 = 成功。
+
+```
+node scripts/workflow.mjs help
+```
+显示帮助信息。
+
+### validate.mjs — JSON Schema 校验器
+
+```
+node scripts/validate.mjs state <statePath>
+node scripts/validate.mjs spec <specPath>
+node scripts/validate.mjs plan <planPath>
+```
+校验 JSON 是否符合对应 schema（`assets/schema/{state,spec,plan}.schema.json`）。退出码 0 = 通过，1 = 校验失败（错误详情输出到 stderr）。
+
+### render.mjs — JSON → Markdown 渲染器
+
+```
+node scripts/render.mjs spec <jsonPath> <outputPath>
+node scripts/render.mjs plan <jsonPath> <outputPath>
+```
+将 JSON 渲染为 Markdown 视图，写入 `<outputPath>`。退出码 0 = 成功，1 = 失败。**渲染产物是 Markdown 视图，禁止手改**；任何修改必须作用于 JSON 事实来源，再重新渲染。
 
 ## 测试命令自动检测
 

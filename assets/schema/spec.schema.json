@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-coding-workflow/schemas/spec.schema.json",
+  "title": "Spec Document",
+  "description": "规格文档契约（事实来源），spec.md 由 render.mjs 渲染生成",
+  "type": "object",
+  "required": ["title", "background", "goal", "features", "acceptance"],
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "需求标题"
+    },
+    "background": {
+      "type": "string",
+      "minLength": 1,
+      "description": "背景与动机：为什么要做"
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1,
+      "description": "目标与成功标准"
+    },
+    "features": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/feature" },
+      "description": "功能规格列表"
+    },
+    "nonFunctional": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "非功能需求（性能、安全、兼容性等）"
+    },
+    "technicalApproach": {
+      "type": "string",
+      "description": "技术方案：架构决策、技术选型、依赖关系"
+    },
+    "fileStructure": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "预计创建/修改的文件列表"
+    },
+    "acceptance": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" },
+      "description": "验收标准（可验证）"
+    },
+    "openQuestions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "待确认的开放问题"
+    }
+  },
+  "$defs": {
+    "feature": {
+      "type": "object",
+      "required": ["name", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "功能名称"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "功能详细描述"
+        },
+        "inputs": {
+          "type": "string",
+          "description": "输入"
+        },
+        "outputs": {
+          "type": "string",
+          "description": "输出"
+        },
+        "edgeCases": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "边界情况"
+        }
+      }
+    }
+  }
+}

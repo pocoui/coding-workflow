@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-coding-workflow/schemas/plan.schema.json",
+  "title": "Execution Plan",
+  "description": "执行计划契约（事实来源），plan.md 由 render.mjs 渲染生成",
+  "type": "object",
+  "required": ["steps"],
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "计划概述"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/step" },
+      "description": "执行步骤列表（按依赖顺序排列）"
+    }
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "required": ["id", "name", "goal", "files", "verification"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "步骤序号（从 1 开始）"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "步骤名称"
+        },
+        "goal": {
+          "type": "string",
+          "minLength": 1,
+          "description": "步骤目标：要做什么"
+        },
+        "files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "本步骤涉及文件列表（创建或修改）"
+        },
+        "verification": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "验收标准：怎么知道这一步做完了"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "description": "依赖的步骤 id 列表"
+        },
+        "risk": {
+          "enum": ["normal", "guarded"],
+          "default": "normal",
+          "description": "风险等级：normal=普通，guarded=受保护（需人工确认）"
+        }
+      }
+    }
+  }
+}

@@ -88,8 +88,15 @@ ai-coding-workflow/
 │   ├── review-spec.md                # Spec 审查 P0/P1/P2 标准
 │   ├── review-plan.md                # Plan 审查 P0/P1/P2 标准
 │   └── review-exec.md                # 执行/代码审查 P0/P1/P2 标准
-├── scripts/                          # (可选) 辅助脚本
-├── assets/                           # (可选) 模板、图片等资源
+├── scripts/                          # (可选) 辅助脚本（零依赖）
+│   ├── workflow.mjs                  # 核心脚本强制层（状态/范围/证据）
+│   ├── validate.mjs                  # JSON Schema 校验器
+│   └── render.mjs                    # JSON → Markdown 渲染器
+├── assets/                           # (可选) 模板、schema 等资源
+│   └── schema/                       # JSON Schema 契约
+│       ├── state.schema.json
+│       ├── spec.schema.json
+│       └── plan.schema.json
 ├── docs/                             # (可选) 产品文档（不随仓库提交）
 │   ├── PRD.md
 │   ├── IMPLEMENTATION_PLAN.md
@@ -104,15 +111,21 @@ ai-coding-workflow/
 ```
 .ai-coding/
 ├── temp/{vId}/     # 本次需求缓存（验收后移入 history）
-│   ├── state.json              # 状态文件
-│   ├── spec.md                # 规格文档
-│   ├── plan.md                # 执行计划
-│   ├── spec-suggest.md        # 校验建议（临时，校验通过后删除）
-│   └── plan-suggest.md        # 校验建议（临时，校验通过后删除）
+│   ├── state.json              # 状态文件（含 version/evidence 字段）
+│   ├── spec.json               # 规格文档 JSON（事实来源）
+│   ├── spec.md                 # 规格文档 Markdown（脚本渲染，禁止手改）
+│   ├── plan.json               # 执行计划 JSON（事实来源）
+│   ├── plan.md                 # 执行计划 Markdown（脚本渲染，禁止手改）
+│   ├── spec-suggest.md         # 校验建议（临时，校验通过后删除）
+│   ├── plan-suggest.md         # 校验建议（临时，校验通过后删除）
+│   └── evidence/               # 执行证据（hash 快照/diff patch/验证输出）
 └── history/{vId}/  # 验收归档
     ├── state.json
+    ├── spec.json
     ├── spec.md
-    └── plan.md
+    ├── plan.json
+    ├── plan.md
+    └── evidence/
 ```
 
 > **建议**：将 `.ai-coding/temp/` 添加到目标项目的 `.gitignore` 中（运行时状态不应提交），而 `.ai-coding/history/` 可选择性提交以保留开发记录。
@@ -253,17 +266,26 @@ $ai-coding-workflow 帮我实现用户登录功能
 - [docs/PRD.md](./docs/PRD.md) — 产品需求文档
 - [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md) — 开发计划
 - [docs/agents.md](./docs/agents.md) — AI 编码代理指引
+- [docs/OPTIMIZATION_PLAN.md](./docs/OPTIMIZATION_PLAN.md) — 优化方案
 
 ---
 
-## 当前边界（第一版）
+## 当前能力与边界
 
-暂不包含：
+### 已实现（脚本强制层）
+
+- **状态流转机器级强制**：`workflow.mjs transition` 校验状态流转合法性，非法流转直接拒绝
+- **文件范围机器级校验**：`workflow.mjs check-scope` 校验文件是否在 allowedPaths 范围内，.ai-coding/ 和 .gitignore 自动豁免
+- **JSON 契约 + Markdown 视图分离**：spec.json/plan.json 为事实来源，spec.md/plan.md 由 render.mjs 渲染生成
+- **证据目录**：每步执行产出 before 快照/验证结果/after diff 三类证据
+- **原子写入**：state.json 采用 tmp + rename 原子操作，防中断损坏
+- **版本化**：state.json 含 version 字段，为后续升级预留兼容
+
+### 暂不包含
 
 - 并行步骤执行；
 - 自动回滚或自动重试（失败即暂停，由用户决策）；
 - React、Vue、H5 等框架专属适配器；
-- 独立 CLI 或 Plugin 分发；
-- 机器级脚本强制（状态流转、文件范围、验证依赖 prompt 指令约束）。
+- 独立 CLI 或 Plugin 分发。
 
-后续按真实使用反馈迭代，不一次性堆砌规则。
+后续按 [优化方案](./docs/OPTIMIZATION_PLAN.md) 迭代。

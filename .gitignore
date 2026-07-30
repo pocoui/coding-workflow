@@ -3,6 +3,8 @@ node_modules/
 
 # 运行时缓存（本 skill 在目标项目中产生的临时状态，不应提交）
 .ai-coding/temp/
+# evidence 目录（执行证据，含文件 hash/diff/验证输出，不应提交）
+.ai-coding/**/evidence/
 
 # 旧版文档（已迁移至 docs/ 目录，不提交）
 docs/
