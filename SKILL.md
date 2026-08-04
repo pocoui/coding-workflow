@@ -259,7 +259,7 @@ Markdown 视图：.ai-coding/temp/{vId}/spec.md
 spec-generator 报告后，主流程启动校验循环，驱动 **spec-reviewer** 和 **spec-generator** 交替工作：
 
 ```
-循环（最多5轮）：
+循环（最多3轮）：
   1. 主流程启动 spec-reviewer
   2. spec-reviewer 读取 .ai-coding/temp/{vId}/spec.md（Markdown 视图）
   3. spec-reviewer 生成校验建议 → 写入 .ai-coding/temp/{vId}/spec-suggest.md
@@ -283,7 +283,7 @@ spec-generator 报告后，主流程启动校验循环，驱动 **spec-reviewer*
 | **spec-generator（修补模式）** | 读取 `spec-suggest.md`，逐条评估并采纳合理建议，修改 `spec.json`（事实来源）。不质疑 reviewer 的发现，专注修补。**不直接修改 spec.md** |
 | **主流程** | 读取 `spec-suggest.md` 判断是否有实质性问题；驱动循环流程；管理临时文件；修补后调用脚本重新渲染 spec.md |
 
-> - 循环最多 **5 轮**，超过后强制退出
+> - 循环最多 **3 轮**，超过后强制退出
 > - spec-reviewer 每次都以"第一次审查"的心态重新审视，不要因为之前提过建议就放行
 >
 > **审查标准**：spec-reviewer 使用 `references/review-spec.md` 中定义的 P0/P1/P2 分类表和检查重点作为审查标准（详见 [review-spec.md](../references/review-spec.md)）。
@@ -300,7 +300,7 @@ spec-generator 报告后，主流程启动校验循环，驱动 **spec-reviewer*
 
 #### 3.3 用户确认
 
-AI 校验循环结束后（无论正常退出还是达到 5 轮上限），主流程向用户展示 spec 关键内容，并提供选项：
+AI 校验循环结束后（无论正常退出还是达到 3 轮上限），主流程向用户展示 spec 关键内容，并提供选项：
 
 ```
 > 1. 继续
@@ -375,7 +375,7 @@ Markdown 视图：.ai-coding/temp/{vId}/plan.md
 plan-generator 报告后，主流程启动校验循环，驱动 **plan-reviewer** 和 **plan-generator** 交替工作：
 
 ```
-循环（最多5轮）：
+循环（最多3轮）：
   1. 主流程启动 plan-reviewer
   2. plan-reviewer 读取 .ai-coding/temp/{vId}/plan.md（Markdown 视图）
   3. plan-reviewer 生成校验建议 → 写入 .ai-coding/temp/{vId}/plan-suggest.md
@@ -399,7 +399,7 @@ plan-generator 报告后，主流程启动校验循环，驱动 **plan-reviewer*
 | **plan-generator（修补模式）** | 读取 `plan-suggest.md`，逐条评估并采纳合理建议，修改 `plan.json`（事实来源）。**不直接修改 plan.md** |
 | **主流程** | 读取 `plan-suggest.md` 判断是否有实质性问题；驱动循环流程；管理临时文件；修补后调用脚本重新渲染 plan.md |
 
-> - 循环最多 **5 轮**，超过后强制退出
+> - 循环最多 **3 轮**，超过后强制退出
 > - plan-reviewer 每次都以"第一次审查"的心态重新审视
 >
 > **审查标准**：plan-reviewer 使用 `references/review-plan.md` 中定义的 P0/P1/P2 分类表和检查重点作为审查标准（详见 [review-plan.md](../references/review-plan.md)）。
@@ -416,7 +416,7 @@ plan-generator 报告后，主流程启动校验循环，驱动 **plan-reviewer*
 
 #### 4.3 用户确认
 
-AI 校验循环结束后（无论正常退出还是达到 5 轮上限），主流程向用户展示 plan 关键内容，并提供选项：
+AI 校验循环结束后（无论正常退出还是达到 3 轮上限），主流程向用户展示 plan 关键内容，并提供选项：
 
 ```
 > 1. 继续
