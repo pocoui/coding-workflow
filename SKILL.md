@@ -113,17 +113,19 @@ ai-coding-workflow/                  # 仓库根 = skill 根
 | 字段 | 说明 | 生成规则 |
 |------|------|---------|
 | `name` | 需求名称 | 将本次的用户需求总结为**不超过10个字的中文描述** |
-| `shortId` | 唯一标识 | 生成一个**10位随机字母（大小写敏感）**，如 `aBcDeFgHiJ` |
-| `vId` | 需求ID | `{name}_{shortId}`，例如 `登录功能_aBcDeFgHiJ` |
+| `vId` | 需求ID | `{name}_{date}_{hash}`，由脚本自动生成，如 `登录功能_20260806_a3f2b1` |
+| `date` | 创建日期 | 脚本自动生成，格式 YYYYMMDD |
+| `hash` | 防碰撞标识 | 脚本自动生成，6 位随机小写字母数字 |
 
 ### state.json 结构
 
 ```json
 {
   "version": 1,
-  "vId": "登录功能_aBcDeFgHiJ",
+  "vId": "登录功能_20260806_a3f2b1",
   "name": "登录功能",
-  "shortId": "aBcDeFgHiJ",
+  "date": "20260806",
+  "hash": "a3f2b1",
   "step": 2,
   "status": "initialized",
   "createdAt": "2026-07-29T10:00:00.000Z",
@@ -164,7 +166,7 @@ initialized → spec_reviewing → spec_confirming → plan_reviewing → plan_c
 
 ## 命名规则
 
-运行时文件名固定，不携带 name/shortId 前缀：
+运行时文件名固定，不携带 name/date/hash 前缀：
 
 | 文件 | 运行时文件名 | 路径 |
 |------|-------------|------|
@@ -199,12 +201,13 @@ initialized → spec_reviewing → spec_confirming → plan_reviewing → plan_c
 
 执行以下操作：
 
-1. 生成 `name`（需求总结，≤10字中文）、`shortId`（10位随机字母）、`vId`（`{name}_{shortId}`）
-2. 调用 `node scripts/workflow.mjs init <项目根目录> <vId> <name> <shortId>` 初始化
+1. 生成 `name`（需求总结，≤10字中文）
+2. 调用 `node scripts/workflow.mjs init <项目根目录> <name>` 初始化
+   - 脚本自动生成 `date`（YYYYMMDD）和 `hash`（6位随机），构造 `vId = {name}_{date}_{hash}`
    - 脚本自动创建 `.ai-coding/temp/{vId}/`、`.ai-coding/history/`、`.ai-coding/temp/{vId}/evidence/` 目录
    - 脚本原子写入 `state.json`（含 `version: 1`、`status: "initialized"`、`evidence.dir` 等字段）
    - 执行时的工作目录是目标项目根，脚本路径相对于 skill 仓库根
-3. 告知用户初始化完成，显示 `vId`
+3. 主流程从脚本输出中读取 `vId`，告知用户初始化完成
 
 ### Step 3：Spec 生成
 
@@ -220,6 +223,20 @@ spec 生成阶段由**两个独立角色**协作完成（注意：每次循环�
 #### 3.1 初始生成（spec-generator）
 
 主流程启动 **spec-generator**，分配以下任务：
+
+> **Claude Code 适配**：使用 Task 工具启动子 Agent，实现上下文隔离。
+> ```
+> Task(
+>   subagent_type: "general_purpose_task",
+>   description: "生成 spec.json",
+>   query: "你是 spec-generator。读取项目上下文和用户需求：{需求原文}。
+>           生成 spec.json（符合 assets/schema/spec.schema.json 契约），写入 .ai-coding/temp/{vId}/spec.json。
+>           字段要求：{字段结构说明}
+>           内容格式约束：{结构化文本规则}
+>           完成后返回 spec 核心概要。"
+> )
+> ```
+> Codex 环境：主流程切换 prompt 扮演 spec-generator。
 
 **spec-generator 的职责：**
 
@@ -267,6 +284,33 @@ Markdown 视图：.ai-coding/temp/{vId}/spec.md
 #### 3.2 AI 校验循环（主流程编排）
 
 spec-generator 报告后，主流程启动校验循环，驱动 **spec-reviewer** 和 **spec-generator** 交替工作：
+
+> **Claude Code 适配**：spec-reviewer 和 spec-generator（修补模式）各自通过 Task 工具启动独立子 Agent。reviewer 子 Agent 天然看不到 generator 的生成过程，实现物理盲审。
+> ```
+> // 启动 reviewer
+> Task(
+>   subagent_type: "general_purpose_task",
+>   description: "审查 spec.md",
+>   query: "你是 spec-reviewer，以独立挑剔视角审查文档。
+>           读取 .ai-coding/temp/{vId}/spec.md。
+>           审查标准：读取 references/review-spec.md 的 P0/P1/P2 分类。
+>           每个问题必须附带证据（引用文档原文 + 具体位置）。
+>           输出 spec-suggest.md 到 .ai-coding/temp/{vId}/spec-suggest.md。
+>           返回摘要：发现几个 P0/P1/P2 问题。"
+> )
+>
+> // 启动 generator（修补模式）
+> Task(
+>   subagent_type: "general_purpose_task",
+>   description: "修补 spec.json",
+>   query: "你是 spec-generator（修补模式）。
+>           读取 .ai-coding/temp/{vId}/spec-suggest.md 中的建议。
+>           逐条评估并采纳合理建议，修改 .ai-coding/temp/{vId}/spec.json。
+>           不直接修改 spec.md。
+>           返回：采纳了哪些建议、拒绝了哪些及理由。"
+> )
+> ```
+> Codex 环境：主流程切换 prompt 依次扮演 reviewer 和 generator。
 
 ```
 循环（最多3轮）：
@@ -345,6 +389,21 @@ plan 生成阶段与 spec 生成阶段采用相同的**双角色协作模式**�
 
 主流程启动 **plan-generator**，分配以下任务：
 
+> **Claude Code 适配**：使用 Task 工具启动子 Agent，实现上下文隔离。
+> ```
+> Task(
+>   subagent_type: "general_purpose_task",
+>   description: "生成 plan.json",
+>   query: "你是 plan-generator。读取已确认的 .ai-coding/temp/{vId}/spec.json。
+>           生成 plan.json（符合 assets/schema/plan.schema.json 契约），写入 .ai-coding/temp/{vId}/plan.json。
+>           字段要求：{字段结构说明}
+>           内容格式约束：{结构化文本规则}
+>           关键约束：每步完成后必须能独立通过测试，不影响已有功能。
+>           完成后返回 plan 步骤概要。"
+> )
+> ```
+> Codex 环境：主流程切换 prompt 扮演 plan-generator。
+
 **plan-generator 的职责：**
 
 1. 读取已确认的 `.ai-coding/temp/{vId}/spec.json`（事实来源，含完整需求上下文）
@@ -389,6 +448,33 @@ Markdown 视图：.ai-coding/temp/{vId}/plan.md
 #### 4.2 AI 校验循环（主流程编排）
 
 plan-generator 报告后，主流程启动校验循环，驱动 **plan-reviewer** 和 **plan-generator** 交替工作：
+
+> **Claude Code 适配**：plan-reviewer 和 plan-generator（修补模式）各自通过 Task 工具启动独立子 Agent。reviewer 子 Agent 天然看不到 generator 的生成过程，实现物理盲审。
+> ```
+> // 启动 reviewer
+> Task(
+>   subagent_type: "general_purpose_task",
+>   description: "审查 plan.md",
+>   query: "你是 plan-reviewer，以独立挑剔视角审查文档。
+>           读取 .ai-coding/temp/{vId}/plan.md。
+>           审查标准：读取 references/review-plan.md 的 P0/P1/P2 分类。
+>           每个问题必须附带证据（引用文档原文 + 具体位置）。
+>           输出 plan-suggest.md 到 .ai-coding/temp/{vId}/plan-suggest.md。
+>           返回摘要：发现几个 P0/P1/P2 问题。"
+> )
+>
+> // 启动 generator（修补模式）
+> Task(
+>   subagent_type: "general_purpose_task",
+>   description: "修补 plan.json",
+>   query: "你是 plan-generator（修补模式）。
+>           读取 .ai-coding/temp/{vId}/plan-suggest.md 中的建议。
+>           逐条评估并采纳合理建议，修改 .ai-coding/temp/{vId}/plan.json。
+>           不直接修改 plan.md。
+>           返回：采纳了哪些建议、拒绝了哪些及理由。"
+> )
+> ```
+> Codex 环境：主流程切换 prompt 依次扮演 reviewer 和 generator。
 
 ```
 循环（最多3轮）：
@@ -491,6 +577,23 @@ AI 校验循环结束后（无论正常退出还是达到 3 轮上限），主�
 - 如果当前已在功能/特性分支上，直接继续
 
 然后启动 **Execution**，传递以下信息：
+
+> **Claude Code 适配**：使用 Task 工具启动子 Agent，execution 子 Agent 在独立上下文中执行代码变更，与 spec/plan 生成阶段完全隔离。
+> ```
+> Task(
+>   subagent_type: "general_purpose_task",
+>   description: "执行 plan 步骤",
+>   query: "你是 Execution 角色。按 .ai-coding/temp/{vId}/plan.json 中的 steps 逐个执行。
+>           状态文件：.ai-coding/temp/{vId}/state.json
+>           每步流程：预先声明文件 → check-scope → 编码 → run-verify → snapshot → git commit → transition。
+>           受保护步骤（risk=guarded）执行前暂停，请求人工确认。
+>           文件越界或测试失败时立即停止，返回失败详情。
+>           完成后返回：执行了几个步骤、每步状态。"
+> )
+> ```
+> Codex 环境：主流程切换 prompt 扮演 Execution。
+>
+> 注意：execution 子 Agent 可按步骤粒度拆分——每个 plan step 启动一个独立 Task，步骤间通过 state.json 和 git commit 天然衔接。
 
 - `plan.json` 路径：`.ai-coding/temp/{vId}/plan.json`（事实来源，含 `steps[].files` / `verification` / `risk`）
 - `plan.md` 路径：`.ai-coding/temp/{vId}/plan.md`（人类可读视图）
@@ -756,9 +859,9 @@ Execution 按 plan.json 中的 steps **逐个**执行，每步流程如下：
 ### workflow.mjs — 核心脚本强制层
 
 ```
-node scripts/workflow.mjs init <workDir> <vId> <name> <shortId>
+node scripts/workflow.mjs init <workDir> <name>
 ```
-初始化 state.json，创建 `.ai-coding/temp/{vId}/`、`.ai-coding/history/`、`.ai-coding/temp/{vId}/evidence/` 目录，原子写入 state.json（含 `version: 1`、`status: "initialized"`、`evidence.dir` 等字段）。
+初始化 state.json，自动生成 `date`（YYYYMMDD）和 `hash`（6位随机），构造 `vId = {name}_{date}_{hash}`，创建 `.ai-coding/temp/{vId}/`、`.ai-coding/history/`、`.ai-coding/temp/{vId}/evidence/` 目录，原子写入 state.json（含 `version: 1`、`status: "initialized"`、`evidence.dir` 等字段）。
 
 ```
 node scripts/workflow.mjs load-state <statePath>
@@ -866,6 +969,85 @@ node scripts/render.mjs plan <jsonPath> <outputPath>
 
 > 无编译步骤的语言（Python、Ruby 等）自动跳过编译/类型检查；无 linter 配置文件时自动跳过 lint 检查。跳过的检查不计入成功或失败。
 
+## Claude Code 适配：Task 工具角色隔离
+
+> 本节适用于 Claude Code 环境。Codex 环境跳过本节，按前述 prompt 角色切换方式执行。
+
+### 问题与方案
+
+Codex 无原生子 Agent 工具，双角色协作通过 prompt 指令让同一 AI 在不同轮次扮演不同角色实现——这会导致"既当裁判又当运动员"：同一大脑的知识盲区和推理惯性完全相同，reviewer 遗漏的东西和 generator 遗漏的东西高度重叠。
+
+Claude Code 拥有 **Task 工具**，可启动**独立上下文**的子 Agent。本 skill 利用此能力实现角色间的物理隔离：
+
+| 维度 | Codex（prompt 切换） | Claude Code（Task 隔离） |
+|------|-------------------|----------------------|
+| 上下文 | 共享，角色间可见 | **独立**，子 Agent 看不到父对话 |
+| 盲审 | prompt 层面"装作"盲审 | **天然盲审**，reviewer 看不到 generator 的思考过程 |
+| 知识盲区 | 完全重叠 | 部分隔离 |
+| 争议仲裁 | 无第三方 | 可启动第三个 Task 做仲裁 |
+
+### 角色与 Task 映射
+
+| 角色 | subagent_type | 职责 |
+|------|--------------|------|
+| spec-generator | `general_purpose_task` | 读取需求和上下文，生成 spec.json |
+| spec-reviewer | `general_purpose_task` | 审查 spec.md，输出 spec-suggest.md |
+| plan-generator | `general_purpose_task` | 读取 spec.json，生成 plan.json |
+| plan-reviewer | `general_purpose_task` | 审查 plan.md，输出 plan-suggest.md |
+| execution | `general_purpose_task` | 按 plan.json 逐步执行代码变更 |
+| moderator（可选） | `general_purpose_task` | 仲裁 generator 与 reviewer 的争议 |
+
+> 所有子 Agent 均在独立上下文中执行。主流程通过文件（spec.json / spec-suggest.md 等）和返回值与子 Agent 通信，不共享对话历史。
+
+### Task 调用通用模板
+
+主流程在每个角色启动点，使用 Task 工具启动子 Agent：
+
+```
+Task(
+  subagent_type: "general_purpose_task",
+  description: "<角色名>",
+  query: "
+    你是 {角色名}。
+    上下文：{必要的文件路径和需求摘要}
+    任务：{具体任务描述}
+    审查标准/约束：{引用 references/review-*.md 的相关内容}
+    输出：{写入哪个文件，返回什么摘要}
+    注意：你在一个独立上下文中工作，看不到其他角色的思考过程。
+          以第一次审查的心态独立工作，每个结论必须基于证据。
+  "
+)
+```
+
+> **关键原则**：
+> - query 中只传递**必要的文件路径和需求摘要**，不传递其他角色的对话历史或思考过程
+> - reviewer 的 query 中**不包含** generator 的身份信息和生成过程说明
+> - 子 Agent 完成后返回简短摘要（如"发现 2 个 P0 问题，3 个 P1 问题"），主流程通过读取文件获取详细内容
+
+### 争议仲裁（moderator）
+
+当 generator（修补模式）与 reviewer 对某个问题存在分歧时，主流程可启动 moderator 子 Agent：
+
+```
+Task(
+  subagent_type: "general_purpose_task",
+  description: "仲裁审查争议",
+  query: "
+    你是 moderator，不参与生成也不参与审查，只做仲裁。
+    争议项：{reviewer 提出的 P0/P1 问题}
+    被异议方理由：{generator 的拒绝理由}
+    审查标准：读取 references/review-spec.md（或 review-plan.md）
+    请基于标准做最终裁决：
+      1. 采纳 reviewer（generator 必须修）
+      2. 采纳 generator（reviewer 误判）
+      3. 折中方案
+    输出裁决结论和理由。
+  "
+)
+```
+
+> moderator 为可选机制，仅在 generator 明确拒绝 reviewer 的 P0/P1 建议且双方无法达成一致时启用。
+
 ## 使用示例
 
 **用户输入：**
@@ -874,10 +1056,10 @@ node scripts/render.mjs plan <jsonPath> <outputPath>
 **skill 应当：**
 
 1. 复述需求并澄清
-2. 初始化：生成 name="登录功能"，shortId="aBcDeFgHiJ"，vId="登录功能_aBcDeFgHiJ"
-3. 生成 spec，经用户确认通过后保存到 `.ai-coding/temp/登录功能_aBcDeFgHiJ/`
+2. 初始化：生成 name="登录功能"，调用脚本自动生成 vId（如 "登录功能_20260806_a3f2b1"）
+3. 生成 spec，经用户确认通过后保存到 `.ai-coding/temp/{vId}/`
 4. 生成 plan，经用户确认通过后保存到同目录
 5. 逐个执行 plan 步骤，每步按 Conventional Commits 格式提交（如 `feat: 添加登录接口`）
 6. 执行完成提示用户验收
-7. 验收通过后，将文件夹归档至 `.ai-coding/history/登录功能_aBcDeFgHiJ/`
+7. 验收通过后，将文件夹归档至 `.ai-coding/history/{vId}/`
 8. 询问是否推送

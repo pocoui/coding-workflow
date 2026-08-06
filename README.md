@@ -1,6 +1,6 @@
 # ai-coding-workflow
 
-> 面向 OpenAI Codex CLI 的自动化软件开发工作流 Skill
+> 面向 OpenAI Codex CLI 和 Claude Code 的自动化软件开发工作流 Skill
 
 将模糊的用户需求转化为**可追溯、可验证、可交付**的代码变更——为 AI 编码提供一条完整且受控的工作流水线。
 
@@ -70,6 +70,8 @@ spec 和 plan 的生成采用双角色协作模式：
 | **execution** | 按 plan.md 逐步执行，每步范围校验 + 分层验证 + git commit |
 
 > Codex 无原生子 Agent 工具，双角色协作通过 prompt 指令让同一 AI 在不同轮次扮演不同角色实现，借助校验建议文件留痕协作。
+>
+> **Claude Code 适配**：利用 Task 工具启动独立子 Agent，每个角色在独立上下文中执行，reviewer 天然看不到 generator 的思考过程，实现物理盲审。详见 SKILL.md「Claude Code 适配：Task 工具角色隔离」章节。
 
 ---
 
@@ -218,12 +220,12 @@ $ai-coding-workflow 帮我实现用户登录功能
 **Skill 执行流程：**
 
 1. 复述需求并澄清
-2. 初始化：生成 name="登录功能"，shortId="aBcDeFgHiJ"，vId="登录功能_aBcDeFgHiJ"
-3. 生成 spec，经用户确认通过后保存到 `.ai-coding/temp/登录功能_aBcDeFgHiJ/`
+2. 初始化：生成 name="登录功能"，调用脚本自动生成 vId（如 "登录功能_20260806_a3f2b1"）
+3. 生成 spec，经用户确认通过后保存到 `.ai-coding/temp/{vId}/`
 4. 生成 plan，经用户确认通过后保存到同目录
 5. 逐个执行 plan 步骤，每步按 Conventional Commits 格式提交（如 `feat: 添加登录接口`）
 6. 执行完成提示用户验收
-7. 验收通过后，将文件夹归档至 `.ai-coding/history/登录功能_aBcDeFgHiJ/`
+7. 验收通过后，将文件夹归档至 `.ai-coding/history/{vId}/`
 8. 询问是否推送
 
 ---

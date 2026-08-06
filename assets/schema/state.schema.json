@@ -4,7 +4,7 @@
   "title": "Workflow State",
   "description": "ai-coding-workflow 工作流状态文件契约（事实来源）",
   "type": "object",
-  "required": ["version", "vId", "name", "shortId", "status", "step", "createdAt", "updatedAt"],
+  "required": ["version", "vId", "name", "date", "hash", "status", "step", "createdAt", "updatedAt"],
   "additionalProperties": false,
   "properties": {
     "version": {
@@ -15,17 +15,22 @@
     "vId": {
       "type": "string",
       "minLength": 1,
-      "description": "需求 ID，格式 {name}_{shortId}"
+      "description": "需求 ID，格式 {name}_{date}_{hash}，如 登录功能_20260806_a3f2b1"
     },
     "name": {
       "type": "string",
       "minLength": 1,
       "description": "需求名称（≤10 字中文）"
     },
-    "shortId": {
+    "date": {
       "type": "string",
-      "pattern": "^[a-zA-Z]{10}$",
-      "description": "10 位随机字母（大小写敏感）"
+      "pattern": "^\\d{8}$",
+      "description": "创建日期，格式 YYYYMMDD"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[a-z0-9]{6}$",
+      "description": "6 位随机小写字母数字，用于防碰撞"
     },
     "step": {
       "type": "integer",

@@ -13,7 +13,7 @@
 import { readFile, writeFile, mkdir, readdir, stat, rename, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, dirname, relative, resolve, sep } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -142,13 +142,24 @@ function checkFilesInScope(files, allowedPaths, cwd) {
 
 /**
  * init - 初始化 state.json
- * 用法: workflow.mjs init <workDir> <vId> <name> <shortId>
+ * 用法: workflow.mjs init <workDir> <name>
+ * 脚本自动生成 date（YYYYMMDD）和 hash（6位随机），构造 vId = {name}_{date}_{hash}
  */
 async function cmdInit(args) {
-  const [workDir, vId, name, shortId] = args;
-  if (!workDir || !vId || !name || !shortId) {
-    fail('用法: init <workDir> <vId> <name> <shortId>');
+  const [workDir, name] = args;
+  if (!workDir || !name) {
+    fail('用法: init <workDir> <name>');
   }
+
+  // 自动生成日期和哈希
+  const now = new Date();
+  const date = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+  ].join('');
+  const hash = randomBytes(3).toString('hex'); // 6 位小写 hex
+  const vId = `${name}_${date}_${hash}`;
 
   const tempDir = join(workDir, '.ai-coding', 'temp', vId);
   const historyDir = join(workDir, '.ai-coding', 'history');
@@ -160,12 +171,13 @@ async function cmdInit(args) {
   await mkdir(historyDir, { recursive: true });
   await mkdir(evidenceDir, { recursive: true });
 
-  const timestamp = now();
+  const timestamp = now.toISOString();
   const state = {
     version: STATE_VERSION,
     vId,
     name,
-    shortId,
+    date,
+    hash,
     step: 2,
     status: 'initialized',
     createdAt: timestamp,
@@ -528,8 +540,9 @@ ai-coding-workflow 核心脚本强制层
 用法: node scripts/workflow.mjs <command> [args...]
 
 命令:
-  init <workDir> <vId> <name> <shortId>
-    初始化 state.json，创建运行时目录与证据目录
+  init <workDir> <name>
+    初始化 state.json，自动生成 date（YYYYMMDD）和 hash（6位随机），
+    构造 vId = {name}_{date}_{hash}，创建运行时目录与证据目录
 
   load-state <statePath>
     加载并输出 state.json（含版本校验）
