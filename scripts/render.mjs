@@ -18,6 +18,41 @@ async function readJson(path) {
   return JSON.parse(await readFile(path, 'utf8'));
 }
 
+// ─── 通用渲染辅助 ──────────────────────────────────────────────────────────
+
+/**
+ * 渲染结构化文本，兼容 string 和 { summary, details } 两种格式
+ */
+function renderStructuredText(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value; // 向后兼容：纯 string
+  const parts = [];
+  if (value.summary) parts.push(value.summary);
+  if (value.details && value.details.length > 0) {
+    parts.push(value.details.map(d => `- ${d}`).join('\n'));
+  }
+  return parts.join('\n\n');
+}
+
+/**
+ * 渲染约束列表
+ */
+function renderConstraints(constraints) {
+  if (!constraints || constraints.length === 0) return '';
+  const typeLabel = {
+    technical: '技术约束',
+    business: '业务规则',
+    compatibility: '兼容性',
+    security: '安全',
+    performance: '性能',
+  };
+  const lines = [];
+  for (const c of constraints) {
+    lines.push(`- **${typeLabel[c.type] || c.type}**：${c.description}`);
+  }
+  return lines.join('\n');
+}
+
 // ─── Spec 渲染 ─────────────────────────────────────────────────────────────
 
 function renderSpec(spec) {
@@ -30,15 +65,46 @@ function renderSpec(spec) {
   // 背景与目标
   lines.push('## 背景与目标', '');
   lines.push('### 背景', '');
-  lines.push(spec.background, '');
+  lines.push(renderStructuredText(spec.background), '');
   lines.push('### 目标', '');
-  lines.push(spec.goal, '');
+  lines.push(renderStructuredText(spec.goal), '');
+
+  // 范围
+  if (spec.scope) {
+    lines.push('## 范围', '');
+    if (spec.scope.summary) lines.push(spec.scope.summary, '');
+    lines.push('### 包含', '');
+    for (const item of spec.scope.inScope) lines.push(`- ${item}`);
+    lines.push('');
+    if (spec.scope.outOfScope && spec.scope.outOfScope.length > 0) {
+      lines.push('### 不包含', '');
+      for (const item of spec.scope.outOfScope) lines.push(`- ${item}`);
+      lines.push('');
+    }
+  }
+
+  // 用户场景
+  if (spec.userScenarios && spec.userScenarios.length > 0) {
+    lines.push('## 用户场景', '');
+    for (const us of spec.userScenarios) {
+      lines.push(`- 作为**${us.role}**，我希望能**${us.action}**，以便**${us.goal}**`);
+    }
+    lines.push('');
+  }
+
+  // 约束
+  if (spec.constraints && spec.constraints.length > 0) {
+    lines.push('## 约束与假设', '');
+    lines.push(renderConstraints(spec.constraints), '');
+    lines.push('');
+  }
 
   // 功能规格
   lines.push('## 功能规格', '');
   for (const feat of spec.features) {
     lines.push(`### ${feat.name}`, '');
-    lines.push(feat.description, '');
+    lines.push(renderStructuredText(feat.description), '');
+    if (feat.userScenario) lines.push(`**关联场景**: ${feat.userScenario}`, '');
     if (feat.inputs) lines.push(`**输入**: ${feat.inputs}`, '');
     if (feat.outputs) lines.push(`**输出**: ${feat.outputs}`, '');
     if (feat.edgeCases && feat.edgeCases.length > 0) {
@@ -58,7 +124,7 @@ function renderSpec(spec) {
   // 技术方案
   if (spec.technicalApproach) {
     lines.push('## 技术方案', '');
-    lines.push(spec.technicalApproach, '');
+    lines.push(renderStructuredText(spec.technicalApproach), '');
   }
 
   // 文件结构
@@ -95,9 +161,10 @@ function renderPlan(plan) {
   lines.push('> 本文档由 plan.json 渲染生成，请勿手动修改。修改请编辑 plan.json 后重新渲染。', '');
   lines.push('---', '');
 
+  // 概述
   if (plan.summary) {
     lines.push('## 概述', '');
-    lines.push(plan.summary, '');
+    lines.push(renderStructuredText(plan.summary), '');
   }
 
   // 步骤总表
@@ -121,7 +188,7 @@ function renderPlan(plan) {
     }
 
     lines.push('**目标**:', '');
-    lines.push(step.goal, '');
+    lines.push(renderStructuredText(step.goal), '');
 
     if (step.dependencies && step.dependencies.length > 0) {
       lines.push(`**依赖**: Step ${step.dependencies.join(', Step ')}`, '');
@@ -131,9 +198,11 @@ function renderPlan(plan) {
     for (const f of step.files) lines.push(`- \`${f}\``);
     lines.push('');
 
-    lines.push('**验收标准**:', '');
-    for (const v of step.verification) lines.push(`- ${v}`);
-    lines.push('');
+    if (step.verification && step.verification.length > 0) {
+      lines.push('**验收标准**:', '');
+      for (const v of step.verification) lines.push(`- ${v}`);
+      lines.push('');
+    }
 
     lines.push('---', '');
   }

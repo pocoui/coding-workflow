@@ -225,17 +225,27 @@ spec 生成阶段由**两个独立角色**协作完成（注意：每次循环�
 
 1. 读取项目上下文和用户需求
 2. 生成规格文档 `spec.json`（JSON 格式，符合 `assets/schema/spec.schema.json` 契约），字段结构：
-   - `title`：需求标题
-   - `background`：背景与动机
-   - `goal`：目标与成功标准
-   - `features`：功能规格列表，每个含 `name` / `description` / `inputs` / `outputs` / `edgeCases`
-   - `nonFunctional`：非功能需求（性能、安全、兼容性等）
-   - `technicalApproach`：技术方案（架构决策、技术选型、依赖关系）
-   - `fileStructure`：预计创建/修改的文件列表
-   - `acceptance`：验收标准
-   - `openQuestions`：开放问题
+   - `title`：需求标题（≤50 字）
+   - `background`：背景与动机（**结构化文本**：`{ summary, details[] }`，details 拆为 3-8 个要点）
+   - `goal`：目标与成功标准（**结构化文本**：`{ summary, details[] }`）
+   - `scope`：范围边界（**必填**：`{ summary, inScope[], outOfScope[] }`，明确做什么/不做什么）
+   - `userScenarios`：用户场景列表（**必填**：`[{ role, action, goal }]`，描述谁、做什么、为什么）
+   - `features`：功能规格列表，每个含 `name` / `description`（**结构化文本**）/ `userScenario`（关联场景）/ `inputs` / `outputs` / `edgeCases`
+   - `constraints`：技术约束与业务假设（**必填**：`[{ type, description }]`，type 取 technical/business/compatibility/security/performance）
+   - `acceptance`：验收标准（每条 ≤200 字，可验证，禁止模糊表述）
+   - `nonFunctional`：非功能需求（性能、安全、兼容性等，每条 ≤200 字）
+   - `technicalApproach`：技术方案（**结构化文本**，可选）
+   - `fileStructure`：预计创建/修改的文件列表（可选）
+   - `openQuestions`：待确认的开放问题（可选，每条 ≤200 字）
 3. 写入 `.ai-coding/temp/{vId}/spec.json`
 4. 向主流程报告完成
+
+> **内容格式约束**（spec-generator 必须遵守）：
+> - 所有标记为"结构化文本"的字段，必须使用 `{ summary, details[] }` 格式，禁止写成单个长段落
+> - `summary` 一句话概述（≤200 字），`details` 拆为 3-8 个要点（每条 ≤300 字）
+> - `scope.inScope` 和 `scope.outOfScope` 必须明确列出，防止后续 plan 阶段范围蔓延
+> - `acceptance` 每条必须可验证，禁止出现"系统应流畅运行""用户体验良好"等模糊表述
+> - `edgeCases` 覆盖空状态、错误状态、并发、权限、超时等边界
 
 主流程收到 spec-generator 完成报告后，依次执行：
 
@@ -339,17 +349,23 @@ plan 生成阶段与 spec 生成阶段采用相同的**双角色协作模式**�
 
 1. 读取已确认的 `.ai-coding/temp/{vId}/spec.json`（事实来源，含完整需求上下文）
 2. 生成执行计划 `plan.json`（JSON 格式，符合 `assets/schema/plan.schema.json` 契约），字段结构：
-   - `summary`：计划概述
+   - `summary`：计划概述（**结构化文本**：`{ summary, details[] }`）
    - `steps`：步骤列表，每个步骤含：
      - `id`：步骤序号
-     - `name`：步骤名称
-     - `goal`：目标（这个步骤要做什么，**关键约束：每步完成后必须能独立通过测试，不影响已有功能**）
+     - `name`：步骤名称（≤50 字）
+     - `goal`：目标（**推荐结构化文本**：`{ summary, details[] }`，也支持纯 string 向后兼容。关键约束：每步完成后必须能独立通过测试，不影响已有功能）
      - `files`：涉及文件列表（需要创建或修改的文件）
-     - `verification`：验收标准（怎么知道这一步做完了）
+     - `verification`：验收标准（每条 ≤200 字，怎么知道这一步做完了）
      - `dependencies`：依赖的其他步骤 id
      - `risk`：风险等级，取值 `"normal"` 或 `"guarded"`（`guarded` 表示受保护步骤，涉及敏感文件需人工确认）
 3. 写入 `.ai-coding/temp/{vId}/plan.json`
 4. 向主流程报告完成
+
+> **内容格式约束**（plan-generator 必须遵守）：
+> - `summary` 和 `goal` 使用结构化文本格式 `{ summary, details[] }`，禁止写成单个长段落
+> - `summary` 一句话概述（≤200 字），`details` 拆为 3-8 个要点（每条 ≤300 字）
+> - `verification` 每条 ≤200 字，一句话说清，禁止将多个验证点合并为一条
+> - `files` 每个文件路径精确定位到具体文件，避免使用通配符或目录级模糊路径
 
 主流程收到 plan-generator 完成报告后，依次执行：
 

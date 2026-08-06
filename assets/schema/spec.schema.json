@@ -4,23 +4,60 @@
   "title": "Spec Document",
   "description": "规格文档契约（事实来源），spec.md 由 render.mjs 渲染生成",
   "type": "object",
-  "required": ["title", "background", "goal", "features", "acceptance"],
+  "required": [
+    "title",
+    "background",
+    "goal",
+    "scope",
+    "userScenarios",
+    "features",
+    "constraints",
+    "acceptance"
+  ],
   "additionalProperties": false,
   "properties": {
     "title": {
       "type": "string",
       "minLength": 1,
-      "description": "需求标题"
+      "maxLength": 50,
+      "description": "需求标题（≤50 字）"
     },
     "background": {
-      "type": "string",
-      "minLength": 1,
-      "description": "背景与动机：为什么要做"
+      "$ref": "#/$defs/structuredText",
+      "description": "背景与动机：谁、什么场景、为什么现在做"
     },
     "goal": {
-      "type": "string",
-      "minLength": 1,
-      "description": "目标与成功标准"
+      "$ref": "#/$defs/structuredText",
+      "description": "目标：要达成什么效果，成功的定义是什么"
+    },
+    "scope": {
+      "type": "object",
+      "required": ["inScope"],
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "范围概述"
+        },
+        "inScope": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "maxLength": 150 },
+          "description": "本次需求包含的内容"
+        },
+        "outOfScope": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 150 },
+          "description": "明确不包含的内容（防止范围蔓延）"
+        }
+      }
+    },
+    "userScenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/userScenario" },
+      "description": "用户场景/故事"
     },
     "features": {
       "type": "array",
@@ -28,13 +65,25 @@
       "items": { "$ref": "#/$defs/feature" },
       "description": "功能规格列表"
     },
+    "constraints": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/constraint" },
+      "description": "技术约束与业务假设"
+    },
+    "acceptance": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "maxLength": 200 },
+      "description": "验收标准（每条 ≤200 字，可验证，禁止模糊表述如'系统应流畅运行'）"
+    },
     "nonFunctional": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": { "type": "string", "maxLength": 200 },
       "description": "非功能需求（性能、安全、兼容性等）"
     },
     "technicalApproach": {
-      "type": "string",
+      "$ref": "#/$defs/structuredText",
       "description": "技术方案：架构决策、技术选型、依赖关系"
     },
     "fileStructure": {
@@ -42,46 +91,111 @@
       "items": { "type": "string" },
       "description": "预计创建/修改的文件列表"
     },
-    "acceptance": {
-      "type": "array",
-      "minItems": 1,
-      "items": { "type": "string" },
-      "description": "验收标准（可验证）"
-    },
     "openQuestions": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": { "type": "string", "maxLength": 200 },
+      "maxItems": 10,
       "description": "待确认的开放问题"
     }
   },
   "$defs": {
+    "structuredText": {
+      "type": "object",
+      "required": ["summary"],
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "一句话概述"
+        },
+        "details": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 300 },
+          "minItems": 1,
+          "maxItems": 10,
+          "description": "详细要点（每条 ≤300 字，渲染为列表）"
+        }
+      }
+    },
+    "userScenario": {
+      "type": "object",
+      "required": ["role", "action", "goal"],
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30,
+          "description": "角色（如：普通用户、管理员）"
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "行为（如：点击录音按钮开始复盘）"
+        },
+        "goal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "目的（如：保存口头复盘内容并获得AI复习材料）"
+        }
+      }
+    },
     "feature": {
       "type": "object",
-      "required": ["name", "description"],
+      "required": ["name", "description", "userScenario"],
       "additionalProperties": false,
       "properties": {
         "name": {
           "type": "string",
           "minLength": 1,
+          "maxLength": 30,
           "description": "功能名称"
+        },
+        "description": {
+          "$ref": "#/$defs/structuredText",
+          "description": "功能详细描述"
+        },
+        "userScenario": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "关联的用户场景 role（对应 userScenarios[].role）"
+        },
+        "inputs": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "输入（数据来源、参数）"
+        },
+        "outputs": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "输出（返回结果、UI 变化）"
+        },
+        "edgeCases": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 200 },
+          "maxItems": 15,
+          "description": "边界情况与异常处理"
+        }
+      }
+    },
+    "constraint": {
+      "type": "object",
+      "required": ["type", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": ["technical", "business", "compatibility", "security", "performance"],
+          "description": "约束类型：technical=技术约束, business=业务规则, compatibility=兼容性, security=安全, performance=性能"
         },
         "description": {
           "type": "string",
           "minLength": 1,
-          "description": "功能详细描述"
-        },
-        "inputs": {
-          "type": "string",
-          "description": "输入"
-        },
-        "outputs": {
-          "type": "string",
-          "description": "输出"
-        },
-        "edgeCases": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "边界情况"
+          "maxLength": 200,
+          "description": "约束描述"
         }
       }
     }
