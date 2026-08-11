@@ -57,8 +57,62 @@ ai-coding-workflow/                  # 仓库根 = skill 根
 ## 工作流总览
 
 ```
-用户需求(文本) → 初始化 → 生成 Spec(via校验循环) → 用户确认 → 生成 Plan(via校验循环) → 用户确认 → 执行 Plan(每步commit+测试) → 验收 → 询问是否推送
+用户需求(文本) → 初始化 → 生成 Spec(via校验循环) → 用户确认 → 生成 Plan(via校验循环) → 用户确认 → 执行 Plan(每步commit+测试) → 代码审查(via校验循环) → 验收 → 询问是否推送
 ```
+
+### 工作流模式
+
+启动工作流时先选择 `mode`，并将模式写入 `state.json`：
+
+| mode | 适用场景 | 审查轮次 |
+|------|---------|---------|
+| `fast` | 小改动、局部 bugfix、文案/样式调整、低风险单点需求 | spec=0, plan=0, code=1 |
+| `standard` | 默认模式，普通功能开发或中等范围修改 | spec=1, plan=1, code=1 |
+| `strict` | 安全、权限、支付、数据迁移、架构变更、删除数据、CI/CD 等高风险需求 | spec=3, plan=3, code=3 |
+
+选择规则：
+- 用户明确指定 `fast` / `standard` / `strict` 时，优先使用用户指定
+- 未指定时默认 `standard`
+- 命中高风险场景时升级为 `strict`
+- 明确是小范围低风险任务时可使用 `fast`
+
+初始化命令：
+
+```
+node scripts/workflow.mjs init <项目根目录> <name> --mode <fast|standard|strict>
+```
+
+#### fast 模式
+
+`fast` 模式用于缩短小需求开发链路，不生成完整 `spec.json` / `plan.json`，改用轻量 `brief.json` 作为事实来源：
+
+```
+用户需求 → 初始化(--mode fast) → 生成 brief.json → validate/render brief → 锁定 allowedPaths → 执行 → 验证 → 代码审查(P0-only, 最多1轮) → 验收
+```
+
+fast 模式步骤：
+
+1. 简短复述需求，只询问阻塞性问题；不要进入完整 spec/plan 澄清流程
+2. 调用 `node scripts/workflow.mjs init <项目根目录> <name> --mode fast`
+3. 生成 `.ai-coding/temp/{vId}/brief.json`，字段符合 `assets/schema/brief.schema.json`
+4. 调用 `node scripts/validate.mjs brief .ai-coding/temp/{vId}/brief.json`
+5. 调用 `node scripts/render.mjs brief .ai-coding/temp/{vId}/brief.json .ai-coding/temp/{vId}/brief.md`
+6. 从 `brief.json` 的 `implementation.files` 提取文件范围，调用：
+   ```
+   node scripts/workflow.mjs set-allowed-paths <statePath> <file1> [file2...]
+   ```
+7. 调用 `node scripts/workflow.mjs transition <statePath> plan_confirming --step 4`，跳过完整 spec/plan 审查
+8. 按 brief 执行实现，运行验证命令
+9. 代码审查前调用 `node scripts/workflow.mjs bump-review <statePath> code`；fast 模式只修复 P0 问题，最多 1 轮
+10. 验收通过后按原归档/推送流程继续
+
+审查循环必须由脚本计数。每次 spec/plan/code reviewer 启动前调用：
+
+```
+node scripts/workflow.mjs bump-review <statePath> <spec|plan|code>
+```
+
+若输出的 `limitReached` 为 `true`，本轮结束后不得再自动发起下一轮同类审查；需要继续时必须询问用户。
 
 ## 目录规则
 
@@ -77,6 +131,7 @@ ai-coding-workflow/                  # 仓库根 = skill 根
 │       ├── plan.md                 # 执行计划 Markdown（脚本渲染，禁止手改）
 │       ├── spec-suggest.md         # 校验建议（临时，校验通过后删除）
 │       ├── plan-suggest.md         # 校验建议（临时，校验通过后删除）
+│       ├── code-suggest.md         # 代码审查建议（临时，审查通过后删除）
 │       └── evidence/               # 执行证据目录
 │           ├── {stepId}-before.json  # 步骤前文件 hash 快照
 │           ├── {stepId}-result.json  # 验证命令输出
@@ -677,7 +732,7 @@ Execution 按 plan.json 中的 steps **逐个**执行，每步流程如下：
 
 **情况 A：全部执行完成，测试通过**
 
-主流程向用户展示完成信息，进入验收流程：
+主流程在提示用户验收前，先执行代码审查环节（§5.3）。审查通过后再向用户展示完成信息并进入验收流程：
 
 ```
 > 🎉 所有步骤执行完成，测试全部通过！
@@ -738,6 +793,81 @@ Execution 按 plan.json 中的 steps **逐个**执行，每步流程如下：
 >
 > 如果问题持续出现，重复此流程直到解决或用户选择 2 重新开始。建议主流程跟踪同一问题的重试次数，连续重试 3 次仍未解决时，主动建议用户选择"重新开始"或"补充信息"来调整方案，不再机械重复。
 
+#### 5.3 代码审查（code-reviewer）
+
+> **位置**：所有 plan steps 执行完成后、用户验收前
+> **与 spec/plan 审查的对称性**：spec → spec-reviewer → 用户确认；plan → plan-reviewer → 用户确认；code → code-reviewer → 用户验收
+
+**审查对象**：
+- 本次 vId 所有 commit 的代码变更（git diff）
+- 对照 spec.json 的 `acceptance` 标准和 `constraints` 约束
+- 对照 plan.json 的 `steps[].goal` 和 `steps[].verification` 逐项确认
+
+**审查维度**（详见 `references/review-code.md`）：
+- P0：功能遗漏 / 安全漏洞 / 破坏已有功能 / 数据丢失风险 / 约束冲突
+- P1：边界未处理 / 代码重复 / 逻辑混乱 / 错误处理不当
+- P2：可维护性建议 / 性能优化 / 风格不一致
+
+**流程**：
+
+1. 主流程收集本次 vId 所有 commit 的 diff（从首个 commit 到最新）
+2. 更新 `state.json`：`status: "code_reviewing"`, `step: 5`
+3. 启动 **code-reviewer**：
+
+> **Claude Code 适配**：使用 Task 工具启动子 Agent，code-reviewer 在独立上下文中审查，看不到 execution 的思考过程。
+> ```
+> Task(
+>   subagent_type: "general_purpose_task",
+>   description: "审查代码变更",
+>   query: "你是 code-reviewer，以独立挑剔视角审查代码变更。
+>           审查对象：本次需求的所有 git diff（从首个 commit 到最新）。
+>           对照标准：
+>           - 读取 .ai-coding/temp/{vId}/spec.json 的 acceptance 和 constraints
+>           - 读取 .ai-coding/temp/{vId}/plan.json 的 steps
+>           审查标准：读取 references/review-code.md 的 P0/P1/P2 分类。
+>           每个问题必须附带证据（引用具体文件、行号、代码片段）。
+>           输出 code-suggest.md 到 .ai-coding/temp/{vId}/code-suggest.md。
+>           返回摘要：发现几个 P0/P1/P2 问题。"
+> )
+> ```
+> Codex 环境：主流程切换 prompt 扮演 code-reviewer。
+
+4. code-reviewer 输出 `code-suggest.md` → 主流程读取并判断：
+   - **有 P0 问题** → 启动 execution（修补模式）修复 P0 → 回到步骤 3 重新审查（最多 3 轮）
+   - **仅 P1/P2 问题** → 展示给用户，由用户决定是否修复：
+     ```
+     > 📋 代码审查完成，发现以下问题：
+     >
+     > P1（建议修复）：
+     >   • [边界未处理] xxx 函数未处理空数组入参
+     >   • [错误处理不当] yyy 的 catch 块吞掉了异常
+     >
+     > P2（可选改进）：
+     >   • [风格不一致] 变量命名混用 camelCase 和 snake_case
+     >
+     > 请选择：
+     > 1. 修复 P1 问题后继续
+     > 2. 跳过，直接验收
+     ```
+   - **无实质性问题** → 直接进入用户验收流程
+
+5. 代码审查通过后（无 P0，P1 已处理或用户选择跳过），更新 `state.json`：`status: "acceptance"`, `step: 5`
+6. 主流程向用户展示完成信息，进入验收流程：
+
+```
+> 🎉 所有步骤执行完成，测试全部通过！代码审查无阻塞问题。
+>
+> 提交记录：
+>   • feat: xxx
+>   • feat: xxx
+>
+> 请验收：
+> 1. 验收通过
+> 2. 用户补充信息
+```
+
+> **校验循环上限**：与 spec/plan 审查一致，代码审查最多 3 轮。超过 3 轮强制暂停，提示用户介入。
+
 ### Step 6：验收后询问推送
 
 测试/验收通过后，询问用户：
@@ -789,7 +919,8 @@ Execution 按 plan.json 中的 steps **逐个**执行，每步流程如下：
 | AI 校验开始 | `plan_reviewing` | 4 | `null` | `.ai-coding/temp/{vId}/state.json` |
 | 用户确认（写入 `allowedPaths`） | `plan_confirming` | 4 | `null` | `.ai-coding/temp/{vId}/state.json` |
 | 每执行完一个 plan step | `executing` | 5 | 当前 plan 步骤序号 | `.ai-coding/temp/{vId}/state.json` |
-| 全部步骤执行完 | `acceptance` | 5 | 最后步骤序号 | `.ai-coding/temp/{vId}/state.json` |
+| 全部步骤执行完，开始代码审查 | `code_reviewing` | 5 | 最后步骤序号 | `.ai-coding/temp/{vId}/state.json` |
+| 代码审查通过，待用户验收 | `acceptance` | 5 | 最后步骤序号 | `.ai-coding/temp/{vId}/state.json` |
 | 回退到某一步 | `executing` | 5 | 回退到的步骤序号 | `.ai-coding/temp/{vId}/state.json` |
 | **验收通过（归档）** | **`accepted`** | **5** | 最后步骤序号 | `.ai-coding/history/{vId}/state.json`（从 temp 移入）|
 | 推送完成 / 不处理 | `completed` | 6 | 最后步骤序号 | `.ai-coding/history/{vId}/state.json` |
@@ -841,15 +972,18 @@ Execution 按 plan.json 中的 steps **逐个**执行，每步流程如下：
        - 否 → 从 Step **4.3 用户确认**继续（校验已完成，直接展示确认界面）
      - `plan_confirming` → 从 Step 4.3 用户确认继续
      - `executing` → 从 Step 5 继续：
-       1. 读取 `plan.json`，定位到 `currentStep + 1` 步骤的内容
-       2. 检查工作区状态：
-          - 工作区干净 → 正常从 `currentStep + 1` 开始执行
-          - 有未提交变更（上次中断遗留） → 判断变更是否属于当前步骤的预期工作：
-            - 是 → 保留变更，继续完成该步骤
-            - 否 → 询问用户是否丢弃遗留变更
-       3. 重新启动 Execution，传递恢复上下文信息
-       如果 `currentStep` 为空（未完成任何步骤就中断），从 Step 1 开始
-     - `acceptance` → 从 Step 5 验收继续
+      1. 读取 `plan.json`，定位到 `currentStep + 1` 步骤的内容
+      2. 检查工作区状态：
+         - 工作区干净 → 正常从 `currentStep + 1` 开始执行
+         - 有未提交变更（上次中断遗留） → 判断变更是否属于当前步骤的预期工作：
+           - 是 → 保留变更，继续完成该步骤
+           - 否 → 询问用户是否丢弃遗留变更
+      3. 重新启动 Execution，传递恢复上下文信息
+      如果 `currentStep` 为空（未完成任何步骤就中断），从 Step 1 开始
+    - `code_reviewing` → 检测 `.ai-coding/temp/{vId}/code-suggest.md` 是否存在且有 P0 问题：
+      - 是 → 从 Step **5.3 代码审查**继续（启动 execution 修补 P0，重新审查）
+      - 否 → 直接进入用户验收流程
+    - `acceptance` → 从 Step 5 验收继续
    - **2 丢弃** → 删除对应的 `.ai-coding/temp/{vId}/` 目录，正常启动新工作流
 
 ## 脚本命令参考
@@ -995,6 +1129,7 @@ Claude Code 拥有 **Task 工具**，可启动**独立上下文**的子 Agent。
 | plan-generator | `general_purpose_task` | 读取 spec.json，生成 plan.json |
 | plan-reviewer | `general_purpose_task` | 审查 plan.md，输出 plan-suggest.md |
 | execution | `general_purpose_task` | 按 plan.json 逐步执行代码变更 |
+| code-reviewer | `general_purpose_task` | 审查代码变更，输出 code-suggest.md |
 | moderator（可选） | `general_purpose_task` | 仲裁 generator 与 reviewer 的争议 |
 
 > 所有子 Agent 均在独立上下文中执行。主流程通过文件（spec.json / spec-suggest.md 等）和返回值与子 Agent 通信，不共享对话历史。
@@ -1060,6 +1195,7 @@ Task(
 3. 生成 spec，经用户确认通过后保存到 `.ai-coding/temp/{vId}/`
 4. 生成 plan，经用户确认通过后保存到同目录
 5. 逐个执行 plan 步骤，每步按 Conventional Commits 格式提交（如 `feat: 添加登录接口`）
-6. 执行完成提示用户验收
-7. 验收通过后，将文件夹归档至 `.ai-coding/history/{vId}/`
-8. 询问是否推送
+6. 执行完成后启动代码审查，检查代码质量与安全性（最多 3 轮）
+7. 审查通过后提示用户验收
+8. 验收通过后，将文件夹归档至 `.ai-coding/history/{vId}/`
+9. 询问是否推送

@@ -21,14 +21,23 @@ import { fileURLToPath } from 'node:url';
 
 const STATE_VERSION = 1;
 
+const MODES = ['fast', 'standard', 'strict'];
+
+const REVIEW_BY_MODE = {
+  fast: { maxSpecRounds: 0, maxPlanRounds: 0, maxCodeRounds: 1 },
+  standard: { maxSpecRounds: 1, maxPlanRounds: 1, maxCodeRounds: 1 },
+  strict: { maxSpecRounds: 3, maxPlanRounds: 3, maxCodeRounds: 3 },
+};
+
 /** 合法状态流转映射：from → [allowed to...] */
 const TRANSITIONS = {
-  initialized: ['spec_reviewing'],
+  initialized: ['spec_reviewing', 'plan_confirming'],
   spec_reviewing: ['spec_confirming', 'initialized'],
   spec_confirming: ['plan_reviewing', 'spec_reviewing'],
   plan_reviewing: ['plan_confirming', 'spec_confirming'],
   plan_confirming: ['executing', 'plan_reviewing'],
-  executing: ['acceptance', 'plan_confirming'],
+  executing: ['code_reviewing', 'plan_confirming'],
+  code_reviewing: ['acceptance', 'executing'],
   acceptance: ['accepted', 'executing'],
   accepted: ['completed'],
   completed: [],
@@ -66,7 +75,7 @@ async function atomicWriteJson(filePath, data) {
 /** 读取并解析 JSON 文件 */
 async function readJson(filePath) {
   const raw = await readFile(filePath, 'utf8');
-  return JSON.parse(raw);
+  return JSON.parse(raw.replace(/^\uFEFF/, ''));
 }
 
 /** 获取当前 ISO 时间戳 */
@@ -147,6 +156,11 @@ function checkFilesInScope(files, allowedPaths, cwd) {
  */
 async function cmdInit(args) {
   const [workDir, name] = args;
+  const flags = parseFlags(args.slice(2));
+  const mode = flags.mode || 'standard';
+  if (!MODES.includes(mode)) {
+    fail(`invalid mode: ${mode} (expected: ${MODES.join(', ')})`);
+  }
   if (!workDir || !name) {
     fail('用法: init <workDir> <name>');
   }
@@ -182,10 +196,18 @@ async function cmdInit(args) {
     status: 'initialized',
     createdAt: timestamp,
     updatedAt: timestamp,
+    mode,
     specPath: `.ai-coding/temp/${vId}/spec.md`,
     planPath: `.ai-coding/temp/${vId}/plan.md`,
+    briefPath: `.ai-coding/temp/${vId}/brief.md`,
     currentStep: null,
     waitingFor: null,
+    review: {
+      ...REVIEW_BY_MODE[mode],
+      specRounds: 0,
+      planRounds: 0,
+      codeRounds: 0,
+    },
     plan: { allowedPaths: [] },
     evidence: { dir: `.ai-coding/temp/${vId}/evidence` },
   };
@@ -306,6 +328,69 @@ async function cmdCheckScope(args) {
  * run-verify - 执行验证命令并判定退出码
  * 用法: workflow.mjs run-verify <command...>
  */
+async function cmdSetAllowedPaths(args) {
+  const [statePath, ...paths] = args;
+  if (!statePath || paths.length === 0) {
+    fail('usage: set-allowed-paths <statePath> <file-or-dir> [file-or-dir...]');
+  }
+
+  const state = await readJson(statePath);
+  const merged = new Set([...(state.plan?.allowedPaths || []), ...paths.map(normalizePath)]);
+  state.plan = state.plan || {};
+  state.plan.allowedPaths = [...merged].sort();
+  state.updatedAt = now();
+
+  await atomicWriteJson(statePath, state);
+  output({ ok: true, allowedPaths: state.plan.allowedPaths, state });
+}
+
+async function cmdBumpReview(args) {
+  const [statePath, kind] = args;
+  if (!statePath || !kind) {
+    fail('usage: bump-review <statePath> <spec|plan|code>');
+  }
+
+  const keyByKind = {
+    spec: ['specRounds', 'maxSpecRounds'],
+    plan: ['planRounds', 'maxPlanRounds'],
+    code: ['codeRounds', 'maxCodeRounds'],
+  };
+  const keys = keyByKind[kind];
+  if (!keys) {
+    fail(`invalid review kind: ${kind} (expected: spec, plan, code)`);
+  }
+
+  const state = await readJson(statePath);
+  const mode = MODES.includes(state.mode) ? state.mode : 'standard';
+  state.mode = mode;
+  state.review = {
+    ...REVIEW_BY_MODE[mode],
+    specRounds: 0,
+    planRounds: 0,
+    codeRounds: 0,
+    ...(state.review || {}),
+  };
+
+  const [roundKey, maxKey] = keys;
+  const currentRounds = Number(state.review[roundKey] || 0);
+  const maxRounds = Number(state.review[maxKey] ?? REVIEW_BY_MODE[mode][maxKey]);
+  const nextRounds = currentRounds + 1;
+  state.review[roundKey] = nextRounds;
+  state.updatedAt = now();
+
+  await atomicWriteJson(statePath, state);
+  output({
+    ok: true,
+    kind,
+    mode,
+    rounds: nextRounds,
+    maxRounds,
+    canContinue: nextRounds < maxRounds,
+    limitReached: nextRounds >= maxRounds,
+    state,
+  });
+}
+
 async function cmdRunVerify(args) {
   if (args.length === 0) fail('用法: run-verify <command...>');
 
@@ -464,6 +549,7 @@ async function cmdListTasks(args) {
         tasks.push({
           vId: state.vId,
           name: state.name,
+          mode: state.mode || 'standard',
           status: state.status,
           step: state.step,
           currentStep: state.currentStep,
@@ -507,6 +593,7 @@ async function cmdResume(args) {
       plan_reviewing: { point: 'Step 4.2', action: '检查 plan-suggest.md，继续校验循环或进入用户确认' },
       plan_confirming: { point: 'Step 4.3', action: '展示 plan 确认界面' },
       executing: { point: 'Step 5', action: `从 Step ${state.currentStep + 1} 继续执行` },
+      code_reviewing: { point: 'Step 5.3', action: '检查 code-suggest.md，继续代码审查或进入验收' },
       acceptance: { point: 'Step 5 验收', action: '展示验收界面' },
       accepted: { point: 'Step 6', action: '询问是否推送' },
       completed: { point: '已完成', action: '无' },
@@ -520,6 +607,7 @@ async function cmdResume(args) {
     ok: true,
     vId: state.vId,
     name: state.name,
+    mode: state.mode || 'standard',
     status,
     step: state.step,
     currentStep: state.currentStep,
@@ -600,6 +688,8 @@ const COMMANDS = {
   'require-state': cmdRequireState,
   transition: cmdTransition,
   'check-scope': cmdCheckScope,
+  'set-allowed-paths': cmdSetAllowedPaths,
+  'bump-review': cmdBumpReview,
   'run-verify': cmdRunVerify,
   'snapshot-before': cmdSnapshotBefore,
   'snapshot-after': cmdSnapshotAfter,

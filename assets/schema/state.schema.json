@@ -35,7 +35,7 @@
     "step": {
       "type": "integer",
       "minimum": 0,
-      "description": "大阶段编号（0=未开始, 2=初始化, 3=spec, 4=plan, 5=执行, 6=推送）"
+      "description": "大阶段编号（0=未开始, 2=初始化, 3=spec, 4=plan, 5=执行/代码审查, 6=推送）"
     },
     "status": {
       "enum": [
@@ -45,6 +45,7 @@
         "plan_reviewing",
         "plan_confirming",
         "executing",
+        "code_reviewing",
         "acceptance",
         "accepted",
         "completed"
@@ -59,6 +60,10 @@
       "type": "string",
       "format": "date-time"
     },
+    "mode": {
+      "enum": ["fast", "standard", "strict"],
+      "description": "Workflow mode. fast uses brief.json; standard is the default; strict keeps full review rounds."
+    },
     "specPath": {
       "type": ["string", "null"],
       "description": "spec.md 路径（相对项目根）"
@@ -66,6 +71,10 @@
     "planPath": {
       "type": ["string", "null"],
       "description": "plan.md 路径（相对项目根）"
+    },
+    "briefPath": {
+      "type": ["string", "null"],
+      "description": "brief.md path for fast mode, relative to project root."
     },
     "currentStep": {
       "type": ["integer", "null"],
@@ -75,6 +84,19 @@
     "waitingFor": {
       "type": ["string", "null"],
       "description": "等待用户输入标记（如 user_supplement），null 表示不等待"
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxSpecRounds": { "type": "integer", "minimum": 0 },
+        "maxPlanRounds": { "type": "integer", "minimum": 0 },
+        "maxCodeRounds": { "type": "integer", "minimum": 0 },
+        "specRounds": { "type": "integer", "minimum": 0 },
+        "planRounds": { "type": "integer", "minimum": 0 },
+        "codeRounds": { "type": "integer", "minimum": 0 }
+      },
+      "description": "Review round limits and counters by phase."
     },
     "plan": {
       "type": "object",

@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-coding-workflow/schemas/brief.schema.json",
+  "title": "Fast Implementation Brief",
+  "description": "Lightweight implementation brief for fast mode.",
+  "type": "object",
+  "required": ["title", "intent", "scope", "implementation", "verification"],
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 50,
+      "description": "Short task title."
+    },
+    "intent": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "description": "What the change should accomplish and why."
+    },
+    "scope": {
+      "type": "object",
+      "required": ["inScope", "outOfScope"],
+      "additionalProperties": false,
+      "properties": {
+        "inScope": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 150
+          }
+        },
+        "outOfScope": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 150
+          }
+        }
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "required": ["files", "steps"],
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Files or directories expected to change."
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      }
+    },
+    "verification": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "description": "Checks that prove the fast-mode change is complete."
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "description": "Known risks or reasons to upgrade to standard/strict mode."
+    }
+  }
+}

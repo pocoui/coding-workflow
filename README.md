@@ -48,6 +48,32 @@ flowchart LR
     L --> I
 ```
 
+### 工作流模式
+
+默认使用 `standard` 模式。小范围、低风险需求可以显式使用 `fast` 模式来缩短开发链路；高风险需求会升级为 `strict` 模式。
+
+| mode | 适用场景 | 流程强度 |
+|------|---------|---------|
+| `fast` | 文案/样式、局部 bugfix、单点低风险改动 | 使用 `brief.json`，跳过完整 spec/plan 审查，代码审查最多 1 轮 |
+| `standard` | 普通功能开发、中等范围修改 | spec/plan/code review 各最多 1 轮 |
+| `strict` | 安全、权限、支付、数据迁移、架构、CI/CD 等高风险需求 | 保留完整 spec/plan/code review，最多 3 轮 |
+
+fast 模式流程：
+
+```text
+用户需求 → init --mode fast → brief.json → validate/render brief → set-allowed-paths → 执行 → 验证 → P0-only 代码审查 → 验收
+```
+
+常用命令：
+
+```bash
+node scripts/workflow.mjs init <项目根目录> <name> --mode fast
+node scripts/validate.mjs brief .ai-coding/temp/{vId}/brief.json
+node scripts/render.mjs brief .ai-coding/temp/{vId}/brief.json .ai-coding/temp/{vId}/brief.md
+node scripts/workflow.mjs set-allowed-paths <statePath> <file1> [file2...]
+node scripts/workflow.mjs bump-review <statePath> <spec|plan|code>
+```
+
 ### 各步骤说明
 
 1. **📝 需求输入** — 用户输入文本需求，AI 复述确认并澄清模糊点
@@ -55,7 +81,8 @@ flowchart LR
 3. **📄 Spec 生成** — 生成规格文档，经 AI 多轮校验（最多 3 轮）和用户确认
 4. **📋 Plan 生成** — 将开发过程拆解为可独立提交的步骤，同样经 AI 校验和用户确认
 5. **🔨 执行与测试** — 按计划逐步实现，每步执行编译检查、lint、测试，通过后 git commit
-6. **✅ 验收与推送** — 用户验收通过后归档，并询问是否推送到远程仓库
+6. **🔍 代码审查** — 所有步骤完成后，对代码变更进行审查（安全、质量、约束符合性，最多 3 轮）
+7. **✅ 验收与推送** — 用户验收通过后归档，并询问是否推送到远程仓库
 
 ### 双角色协作
 
@@ -68,6 +95,7 @@ spec 和 plan 的生成采用双角色协作模式：
 | **plan-generator** | 生成 plan.md，根据校验建议修补 plan.md |
 | **plan-reviewer** | 以独立、挑剔视角审视 plan.md，输出 plan-suggest.md |
 | **execution** | 按 plan.md 逐步执行，每步范围校验 + 分层验证 + git commit |
+| **code-reviewer** | 审查代码变更，检查安全/质量/约束符合性，输出 code-suggest.md |
 
 > Codex 无原生子 Agent 工具，双角色协作通过 prompt 指令让同一 AI 在不同轮次扮演不同角色实现，借助校验建议文件留痕协作。
 >
@@ -98,7 +126,8 @@ ai-coding-workflow/
 │   └── schema/                       # JSON Schema 契约
 │       ├── state.schema.json
 │       ├── spec.schema.json
-│       └── plan.schema.json
+│       ├── plan.schema.json
+│       └── brief.schema.json
 ├── docs/                             # (可选) 产品文档（不随仓库提交）
 │   ├── PRD.md
 │   ├── IMPLEMENTATION_PLAN.md
@@ -118,6 +147,8 @@ ai-coding-workflow/
 │   ├── spec.md                 # 规格文档 Markdown（脚本渲染，禁止手改）
 │   ├── plan.json               # 执行计划 JSON（事实来源）
 │   ├── plan.md                 # 执行计划 Markdown（脚本渲染，禁止手改）
+│   ├── brief.json              # fast 模式轻量需求与执行摘要 JSON（事实来源）
+│   ├── brief.md                # fast 模式 Markdown 视图（脚本渲染，禁止手改）
 │   ├── spec-suggest.md         # 校验建议（临时，校验通过后删除）
 │   ├── plan-suggest.md         # 校验建议（临时，校验通过后删除）
 │   └── evidence/               # 执行证据（hash 快照/diff patch/验证输出）
@@ -204,7 +235,7 @@ git clone https://github.com/pocoui/ai-coding-workflow.git ~/.codex/skills/ai-co
 或在指令中显式调用：
 
 ```
-$ai-coding-workflow 帮我实现用户登录功能
+ai-coding-workflow 帮我实现用户登录功能
 ```
 
 触发词包括：生成功能、开发功能、实现需求、写代码、创建模块、spec、plan、软件开发工作流。
@@ -224,9 +255,10 @@ $ai-coding-workflow 帮我实现用户登录功能
 3. 生成 spec，经用户确认通过后保存到 `.ai-coding/temp/{vId}/`
 4. 生成 plan，经用户确认通过后保存到同目录
 5. 逐个执行 plan 步骤，每步按 Conventional Commits 格式提交（如 `feat: 添加登录接口`）
-6. 执行完成提示用户验收
-7. 验收通过后，将文件夹归档至 `.ai-coding/history/{vId}/`
-8. 询问是否推送
+6. 执行完成后启动代码审查，检查代码质量与安全性（最多 3 轮）
+7. 审查通过后提示用户验收
+8. 验收通过后，将文件夹归档至 `.ai-coding/history/{vId}/`
+9. 询问是否推送
 
 ---
 
@@ -279,6 +311,7 @@ $ai-coding-workflow 帮我实现用户登录功能
 - **状态流转机器级强制**：`workflow.mjs transition` 校验状态流转合法性，非法流转直接拒绝
 - **文件范围机器级校验**：`workflow.mjs check-scope` 校验文件是否在 allowedPaths 范围内，.ai-coding/ 和 .gitignore 自动豁免
 - **JSON 契约 + Markdown 视图分离**：spec.json/plan.json 为事实来源，spec.md/plan.md 由 render.mjs 渲染生成
+- **fast 模式轻量 brief**：小需求可用 brief.json/brief.md 跳过完整 spec/plan 审查，并通过 `bump-review` 限制审查轮次
 - **证据目录**：每步执行产出 before 快照/验证结果/after diff 三类证据
 - **原子写入**：state.json 采用 tmp + rename 原子操作，防中断损坏
 - **版本化**：state.json 含 version 字段，为后续升级预留兼容

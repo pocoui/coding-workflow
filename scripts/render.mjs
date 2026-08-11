@@ -9,13 +9,15 @@
  * 用法:
  *   node scripts/render.mjs spec <jsonPath> <outputPath>
  *   node scripts/render.mjs plan <jsonPath> <outputPath>
+ *   node scripts/render.mjs brief <jsonPath> <outputPath>
  */
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 async function readJson(path) {
-  return JSON.parse(await readFile(path, 'utf8'));
+  const raw = await readFile(path, 'utf8');
+  return JSON.parse(raw.replace(/^\uFEFF/, ''));
 }
 
 // ─── 通用渲染辅助 ──────────────────────────────────────────────────────────
@@ -210,6 +212,51 @@ function renderPlan(plan) {
   return lines.join('\n');
 }
 
+function renderBrief(brief) {
+  const lines = [];
+
+  lines.push(`# ${brief.title}`, '');
+  lines.push('> Generated from brief.json for fast mode. Edit brief.json and render again.', '');
+  lines.push('---', '');
+
+  lines.push('## Intent', '');
+  lines.push(brief.intent, '');
+
+  lines.push('## Scope', '');
+  lines.push('### In Scope', '');
+  for (const item of brief.scope.inScope) lines.push(`- ${item}`);
+  lines.push('');
+  if (brief.scope.outOfScope && brief.scope.outOfScope.length > 0) {
+    lines.push('### Out Of Scope', '');
+    for (const item of brief.scope.outOfScope) lines.push(`- ${item}`);
+    lines.push('');
+  }
+
+  lines.push('## Implementation', '');
+  lines.push('### Files', '');
+  for (const file of brief.implementation.files) lines.push(`- \`${file}\``);
+  lines.push('');
+  lines.push('### Steps', '');
+  brief.implementation.steps.forEach((step, index) => {
+    lines.push(`${index + 1}. ${step}`);
+  });
+  lines.push('');
+
+  lines.push('## Verification', '');
+  brief.verification.forEach((check, index) => {
+    lines.push(`${index + 1}. ${check}`);
+  });
+  lines.push('');
+
+  if (brief.risks && brief.risks.length > 0) {
+    lines.push('## Risks', '');
+    for (const risk of brief.risks) lines.push(`- ${risk}`);
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
 // ─── 入口 ──────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -230,8 +277,11 @@ async function main() {
     case 'plan':
       markdown = renderPlan(data);
       break;
+    case 'brief':
+      markdown = renderBrief(data);
+      break;
     default:
-      process.stderr.write(`未知类型: ${type}（支持: spec, plan）\n`);
+      process.stderr.write(`未知类型: ${type}（支持: spec, plan, brief）\n`);
       process.exit(1);
   }
 

@@ -11,6 +11,7 @@
  *   node scripts/validate.mjs state <statePath>
  *   node scripts/validate.mjs spec <specPath>
  *   node scripts/validate.mjs plan <planPath>
+ *   node scripts/validate.mjs brief <briefPath>
  *
  * 退出码: 0=校验通过, 1=校验失败
  */
@@ -28,12 +29,14 @@ const SCHEMA_ALIASES = {
   state: join(SCHEMA_DIR, 'state.schema.json'),
   spec: join(SCHEMA_DIR, 'spec.schema.json'),
   plan: join(SCHEMA_DIR, 'plan.schema.json'),
+  brief: join(SCHEMA_DIR, 'brief.schema.json'),
 };
 
 // ─── JSON 读取 ─────────────────────────────────────────────────────────────
 
 async function readJson(path) {
-  return JSON.parse(await readFile(path, 'utf8'));
+  const raw = await readFile(path, 'utf8');
+  return JSON.parse(raw.replace(/^\uFEFF/, ''));
 }
 
 // ─── 校验器核心 ────────────────────────────────────────────────────────────
