@@ -6,6 +6,8 @@
 
 不止是 AI 生成代码，而是为软件开发提供一条完整且受控的工作流水线。
 
+> 当前 canonical 仓库：`https://github.com/pocoui/coding-workflow`。Skill 名称仍为 `ai-coding-workflow`。
+
 每一轮开发都留下清晰的轨迹：
 
 | 轨迹 | 产物 | 说明 |
@@ -78,10 +80,10 @@ node scripts/workflow.mjs bump-review <statePath> <spec|plan|code>
 
 1. **📝 需求输入** — 用户输入文本需求，AI 复述确认并澄清模糊点
 2. **⚙️ 初始化** — 创建运行时目录和状态文件
-3. **📄 Spec 生成** — 生成规格文档，经 AI 多轮校验（最多 3 轮）和用户确认
-4. **📋 Plan 生成** — 将开发过程拆解为可独立提交的步骤，同样经 AI 校验和用户确认
+3. **📄 Spec 生成** — `standard/strict` 生成规格文档，经 AI 校验和用户确认；`fast` 使用 `brief.json`
+4. **📋 Plan 生成** — `standard/strict` 将开发过程拆解为可独立提交的步骤；`fast` 跳过完整 plan
 5. **🔨 执行与测试** — 按计划逐步实现，每步执行编译检查、lint、测试，通过后 git commit
-6. **🔍 代码审查** — 所有步骤完成后，对代码变更进行审查（安全、质量、约束符合性，最多 3 轮）
+6. **🔍 代码审查** — 所有步骤完成后，对代码变更进行审查（安全、质量、约束符合性）；轮次由 mode 控制
 7. **✅ 验收与推送** — 用户验收通过后归档，并询问是否推送到远程仓库
 
 ### 双角色协作
@@ -117,7 +119,8 @@ ai-coding-workflow/
 ├── references/                       # (可选) 审查标准参考文档
 │   ├── review-spec.md                # Spec 审查 P0/P1/P2 标准
 │   ├── review-plan.md                # Plan 审查 P0/P1/P2 标准
-│   └── review-exec.md                # 执行/代码审查 P0/P1/P2 标准
+│   ├── review-exec.md                # 执行阶段 P0/P1/P2 标准
+│   └── review-code.md                # 代码审查 P0/P1/P2 标准
 ├── scripts/                          # (可选) 辅助脚本（零依赖）
 │   ├── workflow.mjs                  # 核心脚本强制层（状态/范围/证据）
 │   ├── validate.mjs                  # JSON Schema 校验器
@@ -128,10 +131,6 @@ ai-coding-workflow/
 │       ├── spec.schema.json
 │       ├── plan.schema.json
 │       └── brief.schema.json
-├── docs/                             # (可选) 产品文档（不随仓库提交）
-│   ├── PRD.md
-│   ├── IMPLEMENTATION_PLAN.md
-│   └── agents.md
 ├── README.md                         # 本文件
 ├── package.json
 └── .gitignore
@@ -142,7 +141,7 @@ ai-coding-workflow/
 ```
 .ai-coding/
 ├── temp/{vId}/     # 本次需求缓存（验收后移入 history）
-│   ├── state.json              # 状态文件（含 version/evidence 字段）
+│   ├── state.json              # 状态文件（含 version/mode/review/evidence 字段）
 │   ├── spec.json               # 规格文档 JSON（事实来源）
 │   ├── spec.md                 # 规格文档 Markdown（脚本渲染，禁止手改）
 │   ├── plan.json               # 执行计划 JSON（事实来源）
@@ -151,6 +150,7 @@ ai-coding-workflow/
 │   ├── brief.md                # fast 模式 Markdown 视图（脚本渲染，禁止手改）
 │   ├── spec-suggest.md         # 校验建议（临时，校验通过后删除）
 │   ├── plan-suggest.md         # 校验建议（临时，校验通过后删除）
+│   ├── code-suggest.md         # 代码审查建议（临时，审查通过后删除）
 │   └── evidence/               # 执行证据（hash 快照/diff patch/验证输出）
 └── history/{vId}/  # 验收归档
     ├── state.json
@@ -158,10 +158,14 @@ ai-coding-workflow/
     ├── spec.md
     ├── plan.json
     ├── plan.md
+    ├── brief.json
+    ├── brief.md
     └── evidence/
 ```
 
 > **建议**：将 `.ai-coding/temp/` 添加到目标项目的 `.gitignore` 中（运行时状态不应提交），而 `.ai-coding/history/` 可选择性提交以保留开发记录。
+>
+> 本仓库中的 `docs/` 属于本地产品/设计资料，已被 `.gitignore` 忽略，不作为 skill 分发内容的一部分。
 
 ---
 
@@ -181,16 +185,16 @@ ai-coding-workflow/
 
 ```bash
 # 项目级安装（推荐，仅对当前项目生效）
-npx skills add pocoui/ai-coding-workflow
+npx skills add pocoui/coding-workflow
 
 # 全局安装（所有项目可用）
-npx skills add pocoui/ai-coding-workflow -g
+npx skills add pocoui/coding-workflow -g
 
 # 指定目标 agent 为 codex
-npx skills add pocoui/ai-coding-workflow -a codex
+npx skills add pocoui/coding-workflow -a codex
 
 # 非交互式（CI/CD 友好）
-npx skills add pocoui/ai-coding-workflow -a codex -y
+npx skills add pocoui/coding-workflow -a codex -y
 ```
 
 其他管理命令：
@@ -207,7 +211,7 @@ npx skills remove [name]  # 移除 skill
 在 Codex 交互模式中直接输入：
 
 ```
-$skill-installer pocoui/ai-coding-workflow
+$skill-installer pocoui/coding-workflow
 ```
 
 会自动 clone 到 `~/.codex/skills/`，Codex 会自动检测新 skill（无需重启）。
@@ -216,10 +220,10 @@ $skill-installer pocoui/ai-coding-workflow
 
 ```bash
 # 项目级
-git clone https://github.com/pocoui/ai-coding-workflow.git .agents/skills/ai-coding-workflow
+git clone https://github.com/pocoui/coding-workflow.git .agents/skills/ai-coding-workflow
 
 # 全局
-git clone https://github.com/pocoui/ai-coding-workflow.git ~/.codex/skills/ai-coding-workflow
+git clone https://github.com/pocoui/coding-workflow.git ~/.codex/skills/ai-coding-workflow
 ```
 
 > 注意：手动 clone 时需保证 `SKILL.md` 位于 `.agents/skills/ai-coding-workflow/`（项目级）或 `~/.codex/skills/ai-coding-workflow/`（全局）目录下。
@@ -255,7 +259,7 @@ ai-coding-workflow 帮我实现用户登录功能
 3. 生成 spec，经用户确认通过后保存到 `.ai-coding/temp/{vId}/`
 4. 生成 plan，经用户确认通过后保存到同目录
 5. 逐个执行 plan 步骤，每步按 Conventional Commits 格式提交（如 `feat: 添加登录接口`）
-6. 执行完成后启动代码审查，检查代码质量与安全性（最多 3 轮）
+6. 执行完成后启动代码审查，检查代码质量与安全性（`fast/standard/strict` 分别最多 1/1/3 轮）
 7. 审查通过后提示用户验收
 8. 验收通过后，将文件夹归档至 `.ai-coding/history/{vId}/`
 9. 询问是否推送
@@ -293,17 +297,6 @@ ai-coding-workflow 帮我实现用户登录功能
 
 > 无编译步骤的语言自动跳过编译/类型检查；无 linter 配置文件时自动跳过 lint 检查。跳过的检查不计入成功或失败。
 
----
-
-## 文档
-
-- [docs/PRD.md](./docs/PRD.md) — 产品需求文档
-- [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md) — 开发计划
-- [docs/agents.md](./docs/agents.md) — AI 编码代理指引
-- [docs/OPTIMIZATION_PLAN.md](./docs/OPTIMIZATION_PLAN.md) — 优化方案
-
----
-
 ## 当前能力与边界
 
 ### 已实现（脚本强制层）
@@ -311,9 +304,12 @@ ai-coding-workflow 帮我实现用户登录功能
 - **状态流转机器级强制**：`workflow.mjs transition` 校验状态流转合法性，非法流转直接拒绝
 - **文件范围机器级校验**：`workflow.mjs check-scope` 校验文件是否在 allowedPaths 范围内，.ai-coding/ 和 .gitignore 自动豁免
 - **JSON 契约 + Markdown 视图分离**：spec.json/plan.json 为事实来源，spec.md/plan.md 由 render.mjs 渲染生成
+- **三档工作流模式**：`fast/standard/strict` 分别对应 1/3/9 个主要审查点，按风险控制流程长度
 - **fast 模式轻量 brief**：小需求可用 brief.json/brief.md 跳过完整 spec/plan 审查，并通过 `bump-review` 限制审查轮次
+- **代码审查阶段**：执行完成后进入 `code_reviewing`，通过 `references/review-code.md` 的 P0/P1/P2 标准判断是否进入验收
 - **证据目录**：每步执行产出 before 快照/验证结果/after diff 三类证据
 - **原子写入**：state.json 采用 tmp + rename 原子操作，防中断损坏
+- **BOM 兼容 JSON 读取**：脚本读取 JSON 时兼容 UTF-8 BOM，降低 Windows/PowerShell 环境下的解析失败概率
 - **版本化**：state.json 含 version 字段，为后续升级预留兼容
 
 ### 暂不包含
@@ -322,5 +318,3 @@ ai-coding-workflow 帮我实现用户登录功能
 - 自动回滚或自动重试（失败即暂停，由用户决策）；
 - React、Vue、H5 等框架专属适配器；
 - 独立 CLI 或 Plugin 分发。
-
-后续按 [优化方案](./docs/OPTIMIZATION_PLAN.md) 迭代。
